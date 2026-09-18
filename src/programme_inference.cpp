@@ -212,6 +212,8 @@ ProgrammeInference inferProgrammeTimeline(
   if (options.minimum_programme_seconds <= 0.0 ||
       options.maximum_short_repeat_seconds <= 0.0 ||
       options.ad_block_gap_seconds < 0.0 ||
+      !std::isfinite(options.minimum_ad_break_seconds) ||
+      options.minimum_ad_break_seconds < 0.0 ||
       options.feature_alignment_tolerance_seconds < 0.0 ||
       !std::isfinite(options.minimum_audio_similarity) ||
       options.minimum_audio_similarity < 0.0 ||
@@ -221,7 +223,10 @@ ProgrammeInference inferProgrammeTimeline(
       options.minimum_video_similarity > 1.0 ||
       !std::isfinite(options.audio_video_confirmation_margin) ||
       options.audio_video_confirmation_margin < 0.0 ||
-      options.audio_video_confirmation_margin > 1.0)
+      options.audio_video_confirmation_margin > 1.0 ||
+      !std::isfinite(options.maximum_marker_seconds) ||
+      options.maximum_marker_seconds <= 0.0 ||
+      options.minimum_marker_occurrences < 2)
     throw std::invalid_argument("invalid programme inference options");
 
   std::vector<bool> confirmed(matches.size(), false);
@@ -254,7 +259,9 @@ ProgrammeInference inferProgrammeTimeline(
                               match.similarity >= options.minimum_video_similarity;
     const bool known_catalogue_item =
         match.reference_type == "advertisement" ||
-        match.reference_type == "programme";
+        match.reference_type == "programme" ||
+        match.reference_type == "break_out" ||
+        match.reference_type == "break_in";
     if (!known_catalogue_item && !confirmed[i] && !strong_audio && !strong_video)
       continue;
     if (duration(match) <= 0.0) continue;
@@ -353,18 +360,32 @@ ProgrammeInference inferProgrammeTimeline(
     family.audio_video_confirmed = builder.confirmed;
     bool known_advertisement = false;
     bool known_programme = false;
+    bool known_break_out = false;
+    bool known_break_in = false;
     for (const auto& occurrence : family.occurrences) {
       known_advertisement |= occurrence.source_type == "advertisement";
       known_programme |= occurrence.source_type == "programme";
+      known_break_out |= occurrence.source_type == "break_out";
+      known_break_in |= occurrence.source_type == "break_in";
     }
     if (known_advertisement)
       family.known_content_type = "advertisement";
     else if (known_programme)
       family.known_content_type = "programme";
+    else if (known_break_out && !known_break_in)
+      family.known_content_type = "break_out";
+    else if (known_break_in && !known_break_out)
+      family.known_content_type = "break_in";
     if (known_advertisement)
       family.classification = "advertisement";
-    else if (known_programme ||
-             family.typical_duration_seconds > options.maximum_short_repeat_seconds)
+    else if (known_programme)
+      family.classification = "programme_repeat";
+    else if (known_break_out && !known_break_in)
+      family.classification = "break_out";
+    else if (known_break_in && !known_break_out)
+      family.classification = "break_in";
+    else if (family.typical_duration_seconds >
+             options.maximum_short_repeat_seconds)
       family.classification = "programme_repeat";
     else if (!family.has_audio)
       family.classification = "visual_reuse";
@@ -375,6 +396,7 @@ ProgrammeInference inferProgrammeTimeline(
                                      : builder.score_sum / builder.score_count;
     const double base = known_advertisement ? 0.94
                         : known_programme ? 0.90
+                        : known_break_out || known_break_in ? 0.92
                         : family.audio_video_confirmed ? 0.88
                         : family.has_audio ? 0.76
                                            : 0.48;
@@ -425,7 +447,8 @@ ProgrammeInference inferProgrammeTimeline(
   }
   std::sort(candidates.begin(), candidates.end(), [](const Candidate& a,
                                                        const Candidate& b) {
-    return std::tie(a.start, a.end) < std::tie(b.start, b.end);
+    return std::tie(a.start, a.end, a.family) <
+           std::tie(b.start, b.end, b.family);
   });
 
   struct Block {
@@ -433,40 +456,288 @@ ProgrammeInference inferProgrammeTimeline(
     double end = 0.0;
     std::vector<Candidate> items;
   };
-  std::vector<Block> blocks;
-  for (const auto& candidate : candidates) {
-    if (candidate.end <= candidate.start) continue;
-    if (blocks.empty() ||
-        candidate.start > blocks.back().end + options.ad_block_gap_seconds) {
-      blocks.push_back({candidate.start, candidate.end, {candidate}});
-    } else {
-      blocks.back().end = std::max(blocks.back().end, candidate.end);
-      blocks.back().items.push_back(candidate);
+  auto buildBlocks = [&](const std::vector<Candidate>& source) {
+    std::vector<Block> result;
+    for (const auto& candidate : source) {
+      if (candidate.end <= candidate.start) continue;
+      if (result.empty() ||
+          candidate.start >
+              result.back().end + options.ad_block_gap_seconds) {
+        result.push_back({candidate.start, candidate.end, {candidate}});
+      } else {
+        result.back().end = std::max(result.back().end, candidate.end);
+        result.back().items.push_back(candidate);
+      }
     }
-  }
+    return result;
+  };
+  const auto blocks = buildBlocks(candidates);
 
-  std::vector<TimelineSegment> interruptions;
   const double maximum_block =
       std::max(360.0, options.maximum_short_repeat_seconds * 2.0);
-  for (const auto& block : blocks) {
-    if (block.end - block.start > maximum_block) continue;
+
+  struct FamilyExtent {
+    std::size_t family = 0;
+    double start = 0.0;
+    double end = 0.0;
+  };
+  auto familyExtents = [](const Block& block) {
+    std::map<std::size_t, FamilyExtent> by_family;
+    for (const auto& item : block.items) {
+      auto inserted = by_family.emplace(
+          item.family, FamilyExtent{item.family, item.start, item.end});
+      if (!inserted.second) {
+        inserted.first->second.start =
+            std::min(inserted.first->second.start, item.start);
+        inserted.first->second.end =
+            std::max(inserted.first->second.end, item.end);
+      }
+    }
+    std::vector<FamilyExtent> result;
+    result.reserve(by_family.size());
+    for (const auto& entry : by_family) result.push_back(entry.second);
+    return result;
+  };
+  auto isAdEvidence = [&](const Block& block) {
     std::set<std::size_t> families;
-    double confidence = 0.0;
-    bool confirmed_block = false;
     bool known_advertisement = false;
     for (const auto& item : block.items) {
       families.insert(item.family);
+      known_advertisement |= item.known_advertisement;
+    }
+    return known_advertisement || families.size() >= 2;
+  };
+
+  // A repeated short family is inferred as a transition marker only when it
+  // consistently occupies the same edge of several ad-like blocks and its
+  // inward neighbor changes. The changing-neighbor requirement prevents a
+  // fixed first or last advertisement from being promoted to a marker.
+  struct EdgeStats {
+    std::size_t block_count = 0;
+    std::set<std::size_t> inward_neighbors;
+  };
+  std::vector<EdgeStats> leading(result.content_families.size());
+  std::vector<EdgeStats> trailing(result.content_families.size());
+  for (const auto& block : blocks) {
+    if (!isAdEvidence(block) || block.end - block.start > maximum_block) continue;
+    auto by_start = familyExtents(block);
+    if (by_start.size() < 3) continue;
+    std::sort(by_start.begin(), by_start.end(), [](const FamilyExtent& a,
+                                                   const FamilyExtent& b) {
+      return std::tie(a.start, a.end, a.family) <
+             std::tie(b.start, b.end, b.family);
+    });
+    if (std::abs(by_start[0].start - by_start[1].start) > 1.0e-6) {
+      ++leading[by_start[0].family].block_count;
+      leading[by_start[0].family].inward_neighbors.insert(
+          by_start[1].family);
+    }
+
+    auto by_end = by_start;
+    std::sort(by_end.begin(), by_end.end(), [](const FamilyExtent& a,
+                                               const FamilyExtent& b) {
+      return std::tie(a.end, a.start, a.family) <
+             std::tie(b.end, b.start, b.family);
+    });
+    const std::size_t last = by_end.size() - 1;
+    if (std::abs(by_end[last].end - by_end[last - 1].end) > 1.0e-6) {
+      ++trailing[by_end[last].family].block_count;
+      trailing[by_end[last].family].inward_neighbors.insert(
+          by_end[last - 1].family);
+    }
+  }
+  for (std::size_t i = 0; i < result.content_families.size(); ++i) {
+    auto& family = result.content_families[i];
+    if (family.classification != "short_repeat" ||
+        family.typical_duration_seconds > options.maximum_marker_seconds)
+      continue;
+    const auto current_occurrences = static_cast<std::size_t>(std::count_if(
+        family.occurrences.begin(), family.occurrences.end(),
+        [&](const RepeatOccurrence& occurrence) {
+          return occurrence.source_id == media.source_id;
+        }));
+    if (current_occurrences < options.minimum_marker_occurrences) continue;
+    const bool is_leading =
+        leading[i].block_count >= options.minimum_marker_occurrences &&
+        leading[i].inward_neighbors.size() >= 2;
+    const bool is_trailing =
+        trailing[i].block_count >= options.minimum_marker_occurrences &&
+        trailing[i].inward_neighbors.size() >= 2;
+    if (is_leading != is_trailing)
+      family.classification = is_leading ? "break_out" : "break_in";
+  }
+
+  struct MarkerOccurrence {
+    double start = 0.0;
+    double end = 0.0;
+    std::size_t family = 0;
+    bool break_out = false;
+    bool catalogue = false;
+    double confidence = 0.0;
+  };
+  std::vector<MarkerOccurrence> markers;
+  for (std::size_t i = 0; i < result.content_families.size(); ++i) {
+    const auto& family = result.content_families[i];
+    const bool break_out = family.classification == "break_out";
+    const bool break_in = family.classification == "break_in";
+    if (!break_out && !break_in) continue;
+    for (const auto& occurrence : family.occurrences) {
+      if (occurrence.source_id != media.source_id) continue;
+      markers.push_back({occurrence.start_seconds, occurrence.end_seconds, i,
+                         break_out,
+                         family.known_content_type == family.classification,
+                         family.confidence});
+    }
+  }
+  std::sort(markers.begin(), markers.end(), [](const MarkerOccurrence& a,
+                                                const MarkerOccurrence& b) {
+    return std::tie(a.start, a.end, a.family) <
+           std::tie(b.start, b.end, b.family);
+  });
+
+  // Automatic markers may only refine an ad block. Rebuild the evidence
+  // blocks without markers so a marker cannot bridge otherwise independent
+  // repeated families and create a break by itself.
+  std::vector<Candidate> independent_candidates;
+  independent_candidates.reserve(candidates.size());
+  for (const auto& candidate : candidates) {
+    const auto& classification =
+        result.content_families[candidate.family].classification;
+    if (classification != "break_out" && classification != "break_in")
+      independent_candidates.push_back(candidate);
+  }
+  const auto evidence_blocks = buildBlocks(independent_candidates);
+
+  struct BreakProposal {
+    double start = 0.0;
+    double end = 0.0;
+    double confidence = 0.0;
+    bool minimum_duration_exempt = false;
+    std::string break_out_family_id;
+    std::string break_in_family_id;
+  };
+  std::vector<BreakProposal> proposals;
+  for (const auto& block : evidence_blocks) {
+    if (!isAdEvidence(block) || block.end - block.start > maximum_block) continue;
+    std::set<std::size_t> non_marker_families;
+    double start = media.duration_seconds;
+    double end = 0.0;
+    double confidence = 0.0;
+    bool confirmed_block = false;
+    bool known_advertisement = false;
+    bool has_non_marker = false;
+    for (const auto& item : block.items) {
+      const auto& classification =
+          result.content_families[item.family].classification;
+      if (classification == "break_out" || classification == "break_in")
+        continue;
+      has_non_marker = true;
+      non_marker_families.insert(item.family);
+      start = std::min(start, item.start);
+      end = std::max(end, item.end);
       confidence = std::max(confidence, item.confidence);
       confirmed_block |= item.confirmed;
       known_advertisement |= item.known_advertisement;
     }
-    const bool ad_break = known_advertisement || families.size() >= 2;
-    auto segment = makeSegment(media, ad_break ? "ad_break" : "promo",
-                               block.start, block.end,
-                               confidence + (ad_break ? 0.04 : 0.0) +
-                                   (confirmed_block ? 0.03 : 0.0) +
-                                   (known_advertisement ? 0.05 : 0.0),
-                               2.0, result.content_families);
+    if (!has_non_marker || end <= start ||
+        (!known_advertisement && non_marker_families.size() < 2))
+      continue;
+
+    const MarkerOccurrence* preceding = nullptr;
+    const MarkerOccurrence* following = nullptr;
+    for (const auto& marker : markers) {
+      if (marker.break_out && marker.start <= start &&
+          marker.end <= start + options.feature_alignment_tolerance_seconds &&
+          start - marker.end <= options.ad_block_gap_seconds &&
+          (!preceding || marker.end > preceding->end))
+        preceding = &marker;
+      if (!marker.break_out && marker.end >= end &&
+          marker.start >= end - options.feature_alignment_tolerance_seconds &&
+          marker.start - end <= options.ad_block_gap_seconds &&
+          (!following || marker.start < following->start))
+        following = &marker;
+    }
+    BreakProposal proposal;
+    proposal.start = preceding ? preceding->end : start;
+    proposal.end = following ? following->start : end;
+    proposal.confidence = confidence + 0.04 +
+                          (confirmed_block ? 0.03 : 0.0) +
+                          (known_advertisement ? 0.05 : 0.0);
+    proposal.minimum_duration_exempt = known_advertisement;
+    if (preceding)
+      proposal.break_out_family_id =
+          result.content_families[preceding->family].id;
+    if (following)
+      proposal.break_in_family_id =
+          result.content_families[following->family].id;
+    if (proposal.end > proposal.start) proposals.push_back(std::move(proposal));
+  }
+
+  // A break_out followed by a break_in is sufficient to infer a break even
+  // when none of the intervening advertisements repeated or were catalogued,
+  // but only when both markers were explicitly catalogued. Automatically
+  // inferred markers may refine an independently established break, never
+  // create one by themselves.
+  std::vector<MarkerOccurrence> catalogue_markers;
+  for (const auto& marker : markers)
+    if (marker.catalogue) catalogue_markers.push_back(marker);
+  for (std::size_t i = 0; i < catalogue_markers.size(); ++i) {
+    if (!catalogue_markers[i].break_out) continue;
+    for (std::size_t j = i + 1; j < catalogue_markers.size(); ++j) {
+      if (catalogue_markers[j].start < catalogue_markers[i].end) continue;
+      if (catalogue_markers[j].break_out) break;
+      const double length =
+          catalogue_markers[j].start - catalogue_markers[i].end;
+      if (length <= 0.0 || length > maximum_block) break;
+      BreakProposal proposal;
+      proposal.start = catalogue_markers[i].end;
+      proposal.end = catalogue_markers[j].start;
+      proposal.confidence =
+          std::min(catalogue_markers[i].confidence,
+                   catalogue_markers[j].confidence) + 0.06;
+      proposal.minimum_duration_exempt = true;
+      proposal.break_out_family_id =
+          result.content_families[catalogue_markers[i].family].id;
+      proposal.break_in_family_id =
+          result.content_families[catalogue_markers[j].family].id;
+      proposals.push_back(std::move(proposal));
+      break;
+    }
+  }
+
+  std::sort(proposals.begin(), proposals.end(), [](const BreakProposal& a,
+                                                    const BreakProposal& b) {
+    return std::tie(a.start, a.end) < std::tie(b.start, b.end);
+  });
+  std::vector<BreakProposal> merged_proposals;
+  for (const auto& proposal : proposals) {
+    if (merged_proposals.empty() ||
+        proposal.start > merged_proposals.back().end +
+                             options.feature_alignment_tolerance_seconds) {
+      merged_proposals.push_back(proposal);
+      continue;
+    }
+    auto& merged = merged_proposals.back();
+    merged.end = std::max(merged.end, proposal.end);
+    merged.confidence = std::max(merged.confidence, proposal.confidence);
+    merged.minimum_duration_exempt |= proposal.minimum_duration_exempt;
+    if (merged.break_out_family_id.empty())
+      merged.break_out_family_id = proposal.break_out_family_id;
+    if (!proposal.break_in_family_id.empty())
+      merged.break_in_family_id = proposal.break_in_family_id;
+  }
+
+  std::vector<TimelineSegment> interruptions;
+  interruptions.reserve(merged_proposals.size());
+  for (const auto& proposal : merged_proposals) {
+    if (!proposal.minimum_duration_exempt &&
+        proposal.end - proposal.start < options.minimum_ad_break_seconds)
+      continue;
+    auto segment = makeSegment(media, "ad_break", proposal.start, proposal.end,
+                               proposal.confidence, 2.0,
+                               result.content_families);
+    segment.evidence.break_out_family_id = proposal.break_out_family_id;
+    segment.evidence.break_in_family_id = proposal.break_in_family_id;
     interruptions.push_back(std::move(segment));
   }
 

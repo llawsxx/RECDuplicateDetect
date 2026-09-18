@@ -231,12 +231,33 @@ recdup::MatchSpan catalogueAdvertisement(double query_start, double length) {
   return match;
 }
 
-void testProgrammeInference() {
+recdup::MatchSpan catalogueMarker(double query_start, double length,
+                                  const std::string& role) {
+  auto match = repeatMatch(recdup::FeatureKind::AudioSpectrum, query_start,
+                           0.0, length, 0.95F);
+  match.reference_id = role + "-catalogue";
+  match.reference_name = role;
+  match.reference_path = role + ".wav";
+  match.reference_type = role;
+  return match;
+}
+
+recdup::MatchSpan externalRepeat(double query_start, double length,
+                                 const std::string& reference_id,
+                                 double reference_start = 0.0) {
+  auto match = repeatMatch(recdup::FeatureKind::AudioSpectrum, query_start,
+                           reference_start, length, 0.998F);
+  match.reference_id = reference_id;
+  match.reference_path = reference_id + ".wav";
+  return match;
+}
+
+recdup::MediaFeatures timelineMedia(int duration_seconds) {
   recdup::MediaFeatures media;
   media.source_id = "timeline-source";
   media.input_path = "timeline.ts";
-  media.duration_seconds = 600.0;
-  for (int second = 0; second < 600; ++second) {
+  media.duration_seconds = duration_seconds;
+  for (int second = 0; second < duration_seconds; ++second) {
     recdup::FeatureBucket bucket;
     bucket.start_seconds = second;
     bucket.end_seconds = second + 1;
@@ -244,6 +265,11 @@ void testProgrammeInference() {
     bucket.end_byte = second * 1000 + 999;
     media.buckets.push_back(std::move(bucket));
   }
+  return media;
+}
+
+void testProgrammeInference() {
+  auto media = timelineMedia(600);
 
   std::vector<recdup::MatchSpan> matches{
       repeatMatch(recdup::FeatureKind::AudioSpectrum, 100, 300, 30, 0.998F),
@@ -284,9 +310,15 @@ void testProgrammeInference() {
          "default audio evidence threshold accepted a weak match");
   recdup::ProgrammeInferenceOptions relaxed_audio;
   relaxed_audio.minimum_audio_similarity = 0.96;
-  expect(recdup::inferProgrammeTimeline(media, borderline_audio, relaxed_audio)
-             .content_families.size() == 1,
+  const auto isolated_repeat =
+      recdup::inferProgrammeTimeline(media, borderline_audio, relaxed_audio);
+  expect(isolated_repeat.content_families.size() == 1,
          "configured audio evidence threshold was not applied");
+  expect(isolated_repeat.timeline.size() == 1 &&
+             isolated_repeat.timeline.front().label == "programme" &&
+             isolated_repeat.timeline.front().start_seconds == 0.0 &&
+             isolated_repeat.timeline.front().end_seconds == 600.0,
+         "an isolated short repeat split the programme timeline");
 
   const std::vector<recdup::MatchSpan> paired_borderline{
       repeatMatch(recdup::FeatureKind::AudioSpectrum, 250, 450, 10, 0.97F),
@@ -302,6 +334,168 @@ void testProgrammeInference() {
          "configured confirmation margin was not applied");
 }
 
+void testBreakMarkers() {
+  const auto media = timelineMedia(1000);
+  const std::vector<recdup::MatchSpan> catalogue_markers{
+      catalogueMarker(100, 8, "break_out"),
+      catalogueMarker(170, 8, "break_in")};
+  const auto explicit_result =
+      recdup::inferProgrammeTimeline(media, catalogue_markers);
+  bool found_explicit_break = false;
+  for (const auto& segment : explicit_result.timeline) {
+    if (segment.label == "ad_break" && segment.start_seconds == 108.0 &&
+        segment.end_seconds == 170.0 &&
+        !segment.evidence.break_out_family_id.empty() &&
+        !segment.evidence.break_in_family_id.empty())
+      found_explicit_break = true;
+  }
+  expect(found_explicit_break,
+         "catalogued break markers did not infer an advertisement break");
+  recdup::ProgrammeInferenceOptions short_repeat_limit;
+  short_repeat_limit.maximum_short_repeat_seconds = 5.0;
+  const auto explicit_with_short_limit = recdup::inferProgrammeTimeline(
+      media, catalogue_markers, short_repeat_limit);
+  bool explicit_survived_short_limit = false;
+  for (const auto& segment : explicit_with_short_limit.timeline)
+    if (segment.label == "ad_break" && segment.start_seconds == 108.0 &&
+        segment.end_seconds == 170.0)
+      explicit_survived_short_limit = true;
+  expect(explicit_survived_short_limit,
+         "short-repeat limit overrode catalogued marker roles");
+  const auto marker_json = recdup::makeResultJson(
+      media, catalogue_markers, 0, false, 0, &explicit_result);
+  expect(marker_json.find("\"break_out_family_id\": \"repeat-") !=
+                 std::string::npos &&
+             marker_json.find("\"break_in_family_id\": \"repeat-") !=
+                 std::string::npos,
+         "break marker evidence is missing from JSON");
+
+  std::vector<recdup::MatchSpan> automatic_markers;
+  const std::vector<double> starts{100.0, 400.0, 700.0};
+  for (std::size_t i = 0; i < starts.size(); ++i) {
+    const double start = starts[i];
+    automatic_markers.push_back(externalRepeat(start, 8, "shared-out"));
+    automatic_markers.push_back(externalRepeat(
+        start + 10, 15, "varying-ad-a-" + std::to_string(i)));
+    automatic_markers.push_back(externalRepeat(
+        start + 27, 15, "varying-ad-b-" + std::to_string(i)));
+    automatic_markers.push_back(externalRepeat(start + 44, 8, "shared-in"));
+  }
+  const auto automatic_result =
+      recdup::inferProgrammeTimeline(media, automatic_markers);
+  std::size_t break_out_families = 0;
+  std::size_t break_in_families = 0;
+  for (const auto& family : automatic_result.content_families) {
+    if (family.classification == "break_out") ++break_out_families;
+    if (family.classification == "break_in") ++break_in_families;
+  }
+  expect(break_out_families == 1 && break_in_families == 1,
+         "stable advertisement-edge markers were not recognized");
+  std::size_t marked_breaks = 0;
+  for (const auto& segment : automatic_result.timeline) {
+    if (segment.label == "ad_break" &&
+        !segment.evidence.break_out_family_id.empty() &&
+        !segment.evidence.break_in_family_id.empty())
+      ++marked_breaks;
+  }
+  expect(marked_breaks == 3,
+         "automatic break markers did not bound every advertisement break");
+
+  std::vector<recdup::MatchSpan> marker_only_evidence;
+  for (std::size_t i = 0; i < starts.size(); ++i) {
+    const double start = starts[i];
+    marker_only_evidence.push_back(externalRepeat(start, 8, "only-out"));
+    marker_only_evidence.push_back(externalRepeat(
+        start + 10, 15, "single-item-" + std::to_string(i)));
+    marker_only_evidence.push_back(
+        externalRepeat(start + 27, 8, "only-in"));
+  }
+  const auto marker_only_result =
+      recdup::inferProgrammeTimeline(media, marker_only_evidence);
+  std::size_t inferred_markers = 0;
+  std::size_t inferred_breaks = 0;
+  for (const auto& family : marker_only_result.content_families)
+    if (family.classification == "break_out" ||
+        family.classification == "break_in")
+      ++inferred_markers;
+  for (const auto& segment : marker_only_result.timeline)
+    if (segment.label == "ad_break") ++inferred_breaks;
+  expect(inferred_markers == 2,
+         "automatic marker-only test did not recognize its edge markers");
+  expect(inferred_breaks == 0,
+         "automatic markers created an advertisement break without "
+         "independent evidence");
+
+  auto bridged_evidence = automatic_markers;
+  bridged_evidence.push_back(externalRepeat(800, 10, "bridge-a"));
+  bridged_evidence.push_back(externalRepeat(830, 8, "shared-out"));
+  bridged_evidence.push_back(externalRepeat(858, 10, "bridge-b"));
+  const auto bridged_result =
+      recdup::inferProgrammeTimeline(media, bridged_evidence);
+  bool bridge_created_break = false;
+  for (const auto& segment : bridged_result.timeline)
+    if (segment.label == "ad_break" && segment.end_seconds > 800.0 &&
+        segment.start_seconds < 868.0)
+      bridge_created_break = true;
+  expect(!bridge_created_break,
+         "an automatic marker bridged independent repeat families");
+
+  auto interleaved_markers = automatic_markers;
+  interleaved_markers.push_back(catalogueMarker(800, 8, "break_out"));
+  interleaved_markers.push_back(externalRepeat(850, 8, "shared-out"));
+  interleaved_markers.push_back(catalogueMarker(900, 8, "break_in"));
+  const auto interleaved_result =
+      recdup::inferProgrammeTimeline(media, interleaved_markers);
+  bool found_interleaved_explicit_pair = false;
+  for (const auto& segment : interleaved_result.timeline)
+    if (segment.label == "ad_break" && segment.start_seconds == 808.0 &&
+        segment.end_seconds == 900.0)
+      found_interleaved_explicit_pair = true;
+  expect(found_interleaved_explicit_pair,
+         "an automatic marker blocked a catalogued marker pair");
+}
+
+void testMinimumAdBreakDuration() {
+  const auto media = timelineMedia(500);
+  const std::vector<recdup::MatchSpan> matches{
+      externalRepeat(100, 4, "short-ad-a"),
+      externalRepeat(104, 4, "short-ad-b"),
+      catalogueAdvertisement(200, 5),
+      catalogueMarker(300, 5, "break_out"),
+      catalogueMarker(314, 5, "break_in")};
+
+  const auto default_result = recdup::inferProgrammeTimeline(media, matches);
+  bool found_short_automatic = false;
+  bool found_short_catalogued_ad = false;
+  bool found_short_catalogued_markers = false;
+  for (const auto& segment : default_result.timeline) {
+    if (segment.label != "ad_break") continue;
+    found_short_automatic |= segment.start_seconds == 100.0 &&
+                             segment.end_seconds == 108.0;
+    found_short_catalogued_ad |= segment.start_seconds == 200.0 &&
+                                 segment.end_seconds == 205.0;
+    found_short_catalogued_markers |= segment.start_seconds == 305.0 &&
+                                      segment.end_seconds == 314.0;
+  }
+  expect(!found_short_automatic,
+         "an automatic break shorter than the minimum was retained");
+  expect(found_short_catalogued_ad,
+         "the minimum removed a catalogued advertisement");
+  expect(found_short_catalogued_markers,
+         "the minimum removed a break bounded by catalogued markers");
+
+  recdup::ProgrammeInferenceOptions relaxed;
+  relaxed.minimum_ad_break_seconds = 8.0;
+  const auto relaxed_result =
+      recdup::inferProgrammeTimeline(media, matches, relaxed);
+  for (const auto& segment : relaxed_result.timeline)
+    if (segment.label == "ad_break" && segment.start_seconds == 100.0 &&
+        segment.end_seconds == 108.0)
+      found_short_automatic = true;
+  expect(found_short_automatic,
+         "configured minimum advertisement-break duration was not applied");
+}
+
 }  // namespace
 
 int main() {
@@ -313,6 +507,8 @@ int main() {
     testJsonEscaping();
     testTimestampNormalization();
     testProgrammeInference();
+    testBreakMarkers();
+    testMinimumAdBreakDuration();
     std::cout << "All recdup core tests passed.\n";
     return 0;
   } catch (const std::exception& error) {

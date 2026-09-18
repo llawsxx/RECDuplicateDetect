@@ -17,7 +17,7 @@ FFmpeg packets
   -> reference-time minus query-time offset clustering
   -> continuous aligned runs
   -> repeat content families
-  -> programme / ad break / promo timeline inference
+  -> programme / ad-break timeline inference and transition markers
   -> JSON duplicate spans and programme guesses
 ```
 
@@ -108,6 +108,10 @@ Programme inference is enabled for `scan` by default. It treats strong audio
 matches and audio/video-confirmed matches as short-content evidence. Video-only
 repeats are reported as `visual_reuse` and do not split a programme, which keeps
 reused establishing shots and studio layouts from becoming false ad breaks.
+An isolated short repeat is retained as evidence but does not split the
+timeline. Repeated transition clips can be recognized as `break_out` or
+`break_in` markers, and catalogued markers provide reliable advertisement
+boundaries even when the intervening advertisements have not repeated.
 Matches against sources ingested as `advertisement` are high-confidence ad-break
 evidence even when they are the only repeated item. Sources marked `programme`
 are classified as programme repeats and never create an ad boundary.
@@ -132,8 +136,12 @@ long continuous intervals as probable programme time.
    or a video-only reused shot.
 4. Short repeated families are grouped when their recording intervals are no
    more than `--ad-block-gap` apart. Multiple adjacent families form an
-   `ad_break`; one isolated unknown family is currently labelled `promo`.
-5. The complement of `ad_break` and `promo` intervals is labelled
+   `ad_break`; an isolated unknown family is reported but does not cut the
+   timeline.
+5. Stable short families at the leading or trailing edge of several ad-like
+   blocks can be classified as `break_out` or `break_in`. A marker remains on
+   the programme side of the boundary.
+6. The complement of `ad_break` intervals is labelled
    `programme` when it is at least `--programme-min` seconds long. Shorter
    complement intervals are labelled `unknown`.
 
@@ -151,19 +159,35 @@ Content-family rules:
 | Video-only repeated material | `visual_reuse` | No |
 | Known source ingested as `programme` | `programme_repeat` | No |
 | Long repeated audio/video material | `programme_repeat` | No |
-| Unknown short repeated material | `short_repeat` | Isolated: `promo`; adjacent: `ad_break` |
+| Isolated unknown short repeated material | `short_repeat` | No |
+| Multiple adjacent short repeated families | `short_repeat` | Yes, as `ad_break` |
+| Stable advertisement-edge marker | `break_out` or `break_in` | Defines a boundary; the marker itself remains programme content |
 | Known source ingested as `advertisement` | `advertisement` | Yes, as `ad_break` |
 
 This means repeated establishing shots, studio layouts, and other visual
 insertions do not split a programme when there is no matching audio evidence.
-An isolated unknown audio repeat can still be labelled `promo`; for reliable
-classification of one-off commercials, ingest the commercial with
-`--content-type advertisement`.
+For reliable classification of one-off commercials, ingest the commercial with
+`--content-type advertisement`. Fixed transition clips can be ingested with
+`--content-type break_out` or `--content-type break_in`:
+
+```powershell
+recdup ingest --db test.db --input "break-out.wav" --content-type break_out
+recdup ingest --db test.db --input "break-in.wav" --content-type break_in
+```
+
+Automatic marker recognition is conservative. By default, a clip must be no
+longer than 30 seconds, occur at least three times at the same side of ad-like
+blocks, and have changing inward neighbors. An automatically recognized marker
+can only refine the boundaries of an `ad_break` already established by a known
+advertisement or at least two non-marker short-repeat families; it cannot create
+an `ad_break` by itself. A pair explicitly ingested as `break_out` and
+`break_in` can establish a break without other evidence. Tune the automatic
+limits with `--marker-max` and `--marker-min-occurrences`.
 
 `timeline` is continuous from zero to the normalized recording duration.
 `programme_guesses` contains only its `programme` segments. For programme or
 unknown complement segments, `evidence.preceded_by_break` means an inferred
-`ad_break`/`promo` is immediately before the segment, while
+`ad_break` is immediately before the segment, while
 `evidence.followed_by_break` means one is immediately after it. These flags
 describe timeline geometry, not independent proof of a true edit point.
 
@@ -187,7 +211,7 @@ arguments.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--max-recordings COUNT` | `0` for a new database; stored value otherwise | Persist the maximum number of `recording` sources; `0` means unlimited. Accepted by `init`, `configure`, `ingest`, and `scan --store`. Excess recordings are removed oldest-first by insertion/update order. Advertisement and programme catalogue sources are excluded. |
+| `--max-recordings COUNT` | `0` for a new database; stored value otherwise | Persist the maximum number of `recording` sources; `0` means unlimited. Accepted by `init`, `configure`, `ingest`, and `scan --store`. Excess recordings are removed oldest-first by insertion/update order. Advertisement, programme, and transition-marker catalogue sources are excluded. |
 
 ### Media and decoding options
 
@@ -195,7 +219,7 @@ arguments.
 | --- | --- | --- |
 | `--name TEXT` | input filename | Human-readable source name stored in the database. |
 | `--id TEXT` | generated from absolute path and file size | Stable source ID. Reusing it during ingest or `--store` replaces that source's vectors. |
-| `--content-type TYPE` | `unknown` for `ingest`, `recording` for `scan` | One of `advertisement`, `programme`, `recording`, or `unknown`. Stored once per source and returned in match JSON. |
+| `--content-type TYPE` | `unknown` for `ingest`, `recording` for `scan` | One of `advertisement`, `programme`, `break_out`, `break_in`, `recording`, or `unknown`. Stored once per source and returned in match JSON. |
 | `--mode auto\|video\|audio\|both` | `auto` | Select streams and feature kinds. `both` requires decodable audio and video. |
 | `--timestamp-jump SEC` | `10` | Repair a forward PTS jump larger than this threshold. Backward jumps over the fixed 1-second tolerance are also repaired. |
 | `--no-timestamp-repair` | off | Keep original discontinuous PTS values. Useful for diagnosing source timestamps, usually not recommended for matching. |
@@ -220,9 +244,12 @@ arguments.
 | `--programme-min SEC` | `120` | Minimum complement interval labelled `programme`. |
 | `--short-repeat-max SEC` | `180` | Maximum typical family duration considered short-content evidence. Longer families are treated as programme repeats. |
 | `--ad-block-gap SEC` | `20` | Maximum gap between short repeated items before they are merged into one break. |
+| `--ad-break-min SEC` | `10` | Minimum duration of an automatically inferred `ad_break`; `0` disables the minimum. Known advertisements and breaks bounded by explicitly catalogued markers are exempt. |
 | `--programme-audio-threshold VALUE` | `0.985` | Minimum audio similarity accepted as independent programme-inference evidence; range `0` to `1`. |
 | `--programme-video-threshold VALUE` | `0.985` | Minimum video similarity accepted as independent programme-inference evidence; range `0` to `1`. Video-only evidence remains `visual_reuse`. |
 | `--programme-confirm-margin VALUE` | `0.02` | Amount subtracted from both programme thresholds when aligned audio and video confirm one another; range `0` to `1`. |
+| `--marker-max SEC` | `30` | Maximum duration of a short family eligible for automatic `break_out`/`break_in` recognition. |
+| `--marker-min-occurrences COUNT` | `3` | Minimum same-side occurrences required for automatic marker recognition; minimum `2`. |
 | `--no-programme-inference` | off | Omit `content_families`, `timeline`, and `programme_guesses` from the scan result. |
 
 These programme thresholds are applied after candidate search. Keep
@@ -264,9 +291,11 @@ used for matching; stored scans additionally include
 `database_vector_count_after`.
 
 The output also contains `content_families`, a continuous `timeline`, and
-`programme_guesses`. Timeline labels are `programme`, `ad_break`, `promo`, and
-`unknown`. Every inferred segment includes confidence, boundary uncertainty,
-repeat coverage, audio/video-confirmed coverage, and byte/time boundaries.
+`programme_guesses`. Timeline labels are `programme`, `ad_break`, and
+`unknown`. Content-family classifications additionally include `break_out` and
+`break_in`. Every inferred segment includes confidence, boundary uncertainty,
+repeat coverage, audio/video-confirmed coverage, marker family IDs, and
+byte/time boundaries.
 
 ## Accuracy and performance notes
 

@@ -82,7 +82,7 @@ void usage(std::ostream& output) {
       "Media options:\n"
       "  --name TEXT             Human-readable source name\n"
       "  --id TEXT               Stable source ID\n"
-      "  --content-type TYPE     advertisement|programme|recording|unknown\n"
+      "  --content-type TYPE     advertisement|programme|break_out|break_in|recording|unknown\n"
       "  --mode auto|video|audio|both (default: auto)\n"
       "  --timestamp-jump SEC    Repair jumps larger than this (default: 10)\n"
       "  --no-timestamp-repair   Keep original discontinuous timestamps\n"
@@ -94,11 +94,14 @@ void usage(std::ostream& output) {
       "  --max-gap SEC           Allowed gap between anchors (default: 2.5)\n"
       "  --offset-bin SEC        Alignment offset resolution (default: 1)\n"
       "  --programme-min SEC     Minimum programme guess (default: 120)\n"
-      "  --short-repeat-max SEC  Maximum ad/promo repeat (default: 180)\n"
+      "  --short-repeat-max SEC  Maximum short repeat (default: 180)\n"
       "  --ad-block-gap SEC      Join short repeats into a break (default: 20)\n"
+      "  --ad-break-min SEC      Minimum inferred ad break (default: 10)\n"
       "  --programme-audio-threshold VALUE (default: 0.985)\n"
       "  --programme-video-threshold VALUE (default: 0.985)\n"
       "  --programme-confirm-margin VALUE (default: 0.02)\n"
+      "  --marker-max SEC        Maximum auto marker length (default: 30)\n"
+      "  --marker-min-occurrences N (default: 3)\n"
       "  --store                 Store vectors after scanning\n"
       "  --no-self               Disable repeats within the input\n"
       "  --no-programme-inference Disable programme timeline guesses\n"
@@ -176,11 +179,13 @@ std::string contentType(const Arguments& arguments) {
       arguments.command == "scan" ? "recording" : "unknown";
   const std::string value = optional(arguments, "--content-type", fallback);
   if (value == "advertisement" || value == "programme" ||
+      value == "break_out" || value == "break_in" ||
       value == "recording" || value == "unknown")
     return value;
   throw std::runtime_error(
       "invalid --content-type: " + value +
-      " (expected advertisement, programme, recording, or unknown)");
+      " (expected advertisement, programme, break_out, break_in, recording, "
+      "or unknown)");
 }
 
 std::optional<std::size_t> maximumRecordingsArgument(
@@ -247,6 +252,8 @@ recdup::ProgrammeInferenceOptions inferenceOptions(
       optional(arguments, "--short-repeat-max", "180"), "short-repeat-max");
   options.ad_block_gap_seconds = parseNumber<double>(
       optional(arguments, "--ad-block-gap", "20"), "ad-block-gap");
+  options.minimum_ad_break_seconds = parseNumber<double>(
+      optional(arguments, "--ad-break-min", "10"), "ad-break-min");
   options.minimum_audio_similarity = parseNumber<double>(
       optional(arguments, "--programme-audio-threshold", "0.985"),
       "programme-audio-threshold");
@@ -256,10 +263,22 @@ recdup::ProgrammeInferenceOptions inferenceOptions(
   options.audio_video_confirmation_margin = parseNumber<double>(
       optional(arguments, "--programme-confirm-margin", "0.02"),
       "programme-confirm-margin");
+  options.maximum_marker_seconds = parseNumber<double>(
+      optional(arguments, "--marker-max", "30"), "marker-max");
+  const std::string marker_occurrences =
+      optional(arguments, "--marker-min-occurrences", "3");
+  if (marker_occurrences.empty() || marker_occurrences.front() == '-')
+    throw std::runtime_error(
+        "--marker-min-occurrences must be at least 2");
+  options.minimum_marker_occurrences = parseNumber<std::size_t>(
+      marker_occurrences, "marker-min-occurrences");
   if (options.minimum_programme_seconds <= 0.0 ||
       options.maximum_short_repeat_seconds <= 0.0 ||
       options.ad_block_gap_seconds < 0.0)
     throw std::runtime_error("programme inference durations are invalid");
+  if (!std::isfinite(options.minimum_ad_break_seconds) ||
+      options.minimum_ad_break_seconds < 0.0)
+    throw std::runtime_error("--ad-break-min must be zero or positive");
   if (!std::isfinite(options.minimum_audio_similarity) ||
       options.minimum_audio_similarity < 0.0 ||
       options.minimum_audio_similarity > 1.0)
@@ -275,6 +294,12 @@ recdup::ProgrammeInferenceOptions inferenceOptions(
       options.audio_video_confirmation_margin > 1.0)
     throw std::runtime_error(
         "--programme-confirm-margin must be between 0 and 1");
+  if (!std::isfinite(options.maximum_marker_seconds) ||
+      options.maximum_marker_seconds <= 0.0)
+    throw std::runtime_error("--marker-max must be positive");
+  if (options.minimum_marker_occurrences < 2)
+    throw std::runtime_error(
+        "--marker-min-occurrences must be at least 2");
   return options;
 }
 

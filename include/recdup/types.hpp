@@ -111,6 +111,8 @@ struct TimelineEvidence {
   double repeated_content_coverage = 0.0;
   double audio_video_coverage = 0.0;
   std::size_t repeat_family_count = 0;
+  std::string break_out_family_id;
+  std::string break_in_family_id;
   bool preceded_by_break = false;
   bool followed_by_break = false;
 };

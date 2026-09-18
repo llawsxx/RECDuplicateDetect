@@ -66,6 +66,13 @@ void timelineSegment(std::ostringstream& output,
   number(output, segment.evidence.audio_video_coverage);
   output << ",\n" << indent << "    \"repeat_family_count\": "
          << segment.evidence.repeat_family_count << ",\n"
+         << indent << "    \"break_out_family_id\": ";
+  if (segment.evidence.break_out_family_id.empty()) output << "null";
+  else output << quote(segment.evidence.break_out_family_id);
+  output << ",\n" << indent << "    \"break_in_family_id\": ";
+  if (segment.evidence.break_in_family_id.empty()) output << "null";
+  else output << quote(segment.evidence.break_in_family_id);
+  output << ",\n"
          << indent << "    \"preceded_by_break\": "
          << (segment.evidence.preceded_by_break ? "true" : "false") << ",\n"
          << indent << "    \"followed_by_break\": "

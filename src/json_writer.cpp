@@ -233,6 +233,13 @@ std::string makeResultJson(const MediaFeatures& media,
       if (i + 1 != inference->programme_guesses.size()) output << ',';
       output << '\n';
     }
+    output << "  ],\n  \"programme_recaps\": [";
+    if (!inference->programme_recaps.empty()) output << '\n';
+    for (std::size_t i = 0; i < inference->programme_recaps.size(); ++i) {
+      timelineSegment(output, inference->programme_recaps[i], "    ");
+      if (i + 1 != inference->programme_recaps.size()) output << ',';
+      output << '\n';
+    }
     output << "  ]";
   }
   output << "\n}\n";

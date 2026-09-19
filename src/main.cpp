@@ -102,6 +102,10 @@ void usage(std::ostream& output) {
       "  --programme-confirm-margin VALUE (default: 0.02)\n"
       "  --marker-max SEC        Maximum auto marker length (default: 30)\n"
       "  --marker-min-occurrences N (default: 3)\n"
+      "  --recap-min SEC         Minimum recap coverage (default: 20)\n"
+      "  --recap-gap SEC         Maximum gap inside a recap (default: 5)\n"
+      "  --recap-source-lead SEC Earlier-source lead time (default: 60)\n"
+      "  --recap-min-excerpts N  Minimum source excerpts (default: 2)\n"
       "  --store                 Store vectors after scanning\n"
       "  --no-self               Disable repeats within the input\n"
       "  --no-programme-inference Disable programme timeline guesses\n"
@@ -272,6 +276,19 @@ recdup::ProgrammeInferenceOptions inferenceOptions(
         "--marker-min-occurrences must be at least 2");
   options.minimum_marker_occurrences = parseNumber<std::size_t>(
       marker_occurrences, "marker-min-occurrences");
+  options.minimum_recap_seconds = parseNumber<double>(
+      optional(arguments, "--recap-min", "20"), "recap-min");
+  options.maximum_recap_gap_seconds = parseNumber<double>(
+      optional(arguments, "--recap-gap", "5"), "recap-gap");
+  options.minimum_recap_source_lead_seconds = parseNumber<double>(
+      optional(arguments, "--recap-source-lead", "60"),
+      "recap-source-lead");
+  const std::string recap_excerpts =
+      optional(arguments, "--recap-min-excerpts", "2");
+  if (recap_excerpts.empty() || recap_excerpts.front() == '-')
+    throw std::runtime_error("--recap-min-excerpts must be at least 2");
+  options.minimum_recap_excerpts = parseNumber<std::size_t>(
+      recap_excerpts, "recap-min-excerpts");
   if (options.minimum_programme_seconds <= 0.0 ||
       options.maximum_short_repeat_seconds <= 0.0 ||
       options.ad_block_gap_seconds < 0.0)
@@ -300,6 +317,18 @@ recdup::ProgrammeInferenceOptions inferenceOptions(
   if (options.minimum_marker_occurrences < 2)
     throw std::runtime_error(
         "--marker-min-occurrences must be at least 2");
+  if (!std::isfinite(options.minimum_recap_seconds) ||
+      options.minimum_recap_seconds <= 0.0)
+    throw std::runtime_error("--recap-min must be positive");
+  if (!std::isfinite(options.maximum_recap_gap_seconds) ||
+      options.maximum_recap_gap_seconds < 0.0)
+    throw std::runtime_error("--recap-gap must be zero or positive");
+  if (!std::isfinite(options.minimum_recap_source_lead_seconds) ||
+      options.minimum_recap_source_lead_seconds < 0.0)
+    throw std::runtime_error(
+        "--recap-source-lead must be zero or positive");
+  if (options.minimum_recap_excerpts < 2)
+    throw std::runtime_error("--recap-min-excerpts must be at least 2");
   return options;
 }
 
@@ -560,7 +589,9 @@ int run(const Arguments& arguments) {
       std::cerr << "Guessed " << inference->programme_guesses.size()
                 << " programme spans from "
                 << inference->content_families.size()
-                << " repeat families.\n";
+                << " repeat families, including "
+                << inference->programme_recaps.size()
+                << " recap regions.\n";
     return 0;
   }
   throw std::runtime_error("unknown command: " + arguments.command);

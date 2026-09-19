@@ -226,7 +226,14 @@ ProgrammeInference inferProgrammeTimeline(
       options.audio_video_confirmation_margin > 1.0 ||
       !std::isfinite(options.maximum_marker_seconds) ||
       options.maximum_marker_seconds <= 0.0 ||
-      options.minimum_marker_occurrences < 2)
+      options.minimum_marker_occurrences < 2 ||
+      !std::isfinite(options.minimum_recap_seconds) ||
+      options.minimum_recap_seconds <= 0.0 ||
+      !std::isfinite(options.maximum_recap_gap_seconds) ||
+      options.maximum_recap_gap_seconds < 0.0 ||
+      !std::isfinite(options.minimum_recap_source_lead_seconds) ||
+      options.minimum_recap_source_lead_seconds < 0.0 ||
+      options.minimum_recap_excerpts < 2)
     throw std::invalid_argument("invalid programme inference options");
 
   std::vector<bool> confirmed(matches.size(), false);
@@ -424,6 +431,142 @@ ProgrammeInference inferProgrammeTimeline(
   for (std::size_t i = 0; i < result.content_families.size(); ++i)
     result.content_families[i].id = "repeat-" + std::to_string(i + 1);
 
+  struct RecapAnchor {
+    double source_start = 0.0;
+    double source_end = 0.0;
+    double target_start = 0.0;
+    double target_end = 0.0;
+    bool confirmed = false;
+  };
+  std::vector<RecapAnchor> recap_anchors;
+  for (const auto& item : selected) {
+    const auto& match = *item.match;
+    if (match.reference_id != media.source_id) continue;
+    RecapAnchor anchor;
+    if (match.query_end_seconds + options.minimum_recap_source_lead_seconds <=
+        match.reference_start_seconds) {
+      anchor.source_start = match.query_start_seconds;
+      anchor.source_end = match.query_end_seconds;
+      anchor.target_start = match.reference_start_seconds;
+      anchor.target_end = match.reference_end_seconds;
+    } else if (match.reference_end_seconds +
+                   options.minimum_recap_source_lead_seconds <=
+               match.query_start_seconds) {
+      anchor.source_start = match.reference_start_seconds;
+      anchor.source_end = match.reference_end_seconds;
+      anchor.target_start = match.query_start_seconds;
+      anchor.target_end = match.query_end_seconds;
+    } else {
+      continue;
+    }
+    anchor.confirmed = item.confirmed;
+    recap_anchors.push_back(anchor);
+  }
+  std::sort(recap_anchors.begin(), recap_anchors.end(),
+            [](const RecapAnchor& a, const RecapAnchor& b) {
+              return std::tie(a.target_start, a.target_end, a.source_start) <
+                     std::tie(b.target_start, b.target_end, b.source_start);
+            });
+
+  struct RecapDraft {
+    double start = 0.0;
+    double end = 0.0;
+    double confidence = 0.0;
+  };
+  std::vector<RecapDraft> recap_drafts;
+  std::size_t recap_begin = 0;
+  while (recap_begin < recap_anchors.size()) {
+    std::size_t recap_end = recap_begin + 1;
+    double target_end = recap_anchors[recap_begin].target_end;
+    while (recap_end < recap_anchors.size() &&
+           recap_anchors[recap_end].target_start <=
+               target_end + options.maximum_recap_gap_seconds) {
+      target_end = std::max(target_end,
+                            recap_anchors[recap_end].target_end);
+      ++recap_end;
+    }
+
+    const double target_start = recap_anchors[recap_begin].target_start;
+    std::vector<std::pair<double, double>> target_intervals;
+    std::vector<std::pair<double, double>> source_intervals;
+    bool confirmed = false;
+    for (std::size_t i = recap_begin; i < recap_end; ++i) {
+      target_intervals.emplace_back(recap_anchors[i].target_start,
+                                    recap_anchors[i].target_end);
+      source_intervals.emplace_back(recap_anchors[i].source_start,
+                                    recap_anchors[i].source_end);
+      confirmed |= recap_anchors[i].confirmed;
+    }
+    const double target_span = target_end - target_start;
+    const double target_coverage =
+        unionCoverage(target_intervals, target_start, target_end) * target_span;
+
+    std::sort(source_intervals.begin(), source_intervals.end());
+    std::vector<std::pair<double, double>> source_excerpts;
+    for (const auto& interval : source_intervals) {
+      if (source_excerpts.empty() ||
+          interval.first > source_excerpts.back().second +
+                               options.feature_alignment_tolerance_seconds) {
+        source_excerpts.push_back(interval);
+      } else {
+        source_excerpts.back().second =
+            std::max(source_excerpts.back().second, interval.second);
+      }
+    }
+    const double source_span = source_excerpts.empty()
+                                   ? 0.0
+                                   : source_excerpts.back().second -
+                                         source_excerpts.front().first;
+    const bool continuous = target_span > 0.0 &&
+                            target_coverage / target_span >= 0.70;
+    const bool compressed =
+        source_span >= std::max(options.minimum_recap_source_lead_seconds,
+                                target_span * 2.0);
+    if (target_coverage >= options.minimum_recap_seconds && continuous &&
+        compressed &&
+        source_excerpts.size() >= options.minimum_recap_excerpts) {
+      const double confidence =
+          0.72 + std::min(0.12, target_coverage / 300.0) +
+          std::min(0.10, (source_excerpts.size() - 2) * 0.025) +
+          (confirmed ? 0.04 : 0.0);
+      recap_drafts.push_back(
+          {target_start, target_end, std::min(0.96, confidence)});
+    }
+    recap_begin = recap_end;
+  }
+
+  auto overlapsRecap = [&](double start, double end) {
+    for (const auto& recap : recap_drafts)
+      if (overlap(start, end, recap.start, recap.end) > 0.0) return true;
+    return false;
+  };
+  for (auto& family : result.content_families) {
+    if (family.classification != "short_repeat" ||
+        family.known_content_type != "unknown")
+      continue;
+    bool participates = false;
+    for (const auto& recap : recap_drafts) {
+      bool has_recap_occurrence = false;
+      bool has_earlier_occurrence = false;
+      for (const auto& occurrence : family.occurrences) {
+        if (occurrence.source_id != media.source_id) continue;
+        has_recap_occurrence |=
+            overlap(occurrence.start_seconds, occurrence.end_seconds,
+                    recap.start, recap.end) > 0.0;
+        has_earlier_occurrence |=
+            occurrence.end_seconds +
+                    options.minimum_recap_source_lead_seconds <=
+                recap.start;
+      }
+      participates |= has_recap_occurrence && has_earlier_occurrence;
+    }
+    if (participates) family.classification = "programme_recap";
+  }
+  for (const auto& recap : recap_drafts)
+    result.programme_recaps.push_back(makeSegment(
+        media, "programme_recap", recap.start, recap.end, recap.confidence,
+        options.maximum_recap_gap_seconds, result.content_families));
+
   std::vector<Candidate> candidates;
   for (std::size_t i = 0; i < result.content_families.size(); ++i) {
     const auto& family = result.content_families[i];
@@ -436,6 +579,9 @@ ProgrammeInference inferProgrammeTimeline(
       continue;
     for (const auto& occurrence : family.occurrences) {
       if (occurrence.source_id != media.source_id) continue;
+      if (!known_advertisement &&
+          overlapsRecap(occurrence.start_seconds, occurrence.end_seconds))
+        continue;
       candidates.push_back({std::clamp(occurrence.start_seconds, 0.0,
                                        media.duration_seconds),
                             std::clamp(occurrence.end_seconds, 0.0,
@@ -460,7 +606,18 @@ ProgrammeInference inferProgrammeTimeline(
     std::vector<Block> result;
     for (const auto& candidate : source) {
       if (candidate.end <= candidate.start) continue;
+      bool recap_between = false;
+      if (!result.empty()) {
+        for (const auto& recap : recap_drafts) {
+          if (recap.start < candidate.start &&
+              recap.end > result.back().end) {
+            recap_between = true;
+            break;
+          }
+        }
+      }
       if (result.empty() ||
+          recap_between ||
           candidate.start >
               result.back().end + options.ad_block_gap_seconds) {
         result.push_back({candidate.start, candidate.end, {candidate}});

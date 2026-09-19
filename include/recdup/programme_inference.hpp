@@ -18,6 +18,10 @@ struct ProgrammeInferenceOptions {
   double audio_video_confirmation_margin = 0.02;
   double maximum_marker_seconds = 30.0;
   std::size_t minimum_marker_occurrences = 3;
+  double minimum_recap_seconds = 20.0;
+  double maximum_recap_gap_seconds = 5.0;
+  double minimum_recap_source_lead_seconds = 60.0;
+  std::size_t minimum_recap_excerpts = 2;
 };
 
 ProgrammeInference inferProgrammeTimeline(

@@ -141,7 +141,14 @@ long continuous intervals as probable programme time.
 5. Stable short families at the leading or trailing edge of several ad-like
    blocks can be classified as `break_out` or `break_in`. A marker remains on
    the programme side of the boundary.
-6. The complement of `ad_break` intervals is labelled
+6. A recap is detected inside programme time when several later, contiguous
+   repeated excerpts point back to separated earlier excerpts from the same
+   recording. The later coverage must be at least `--recap-min` seconds, the
+   earlier material must lead it by at least `--recap-source-lead` seconds,
+   and the earlier excerpts must span at least twice the recap duration. Recap
+   evidence is labelled `programme_recap`, is excluded from automatic ad
+   candidates, and does not split the programme timeline.
+7. The complement of `ad_break` intervals is labelled
    `programme` when it is at least `--programme-min` seconds long. Shorter
    complement intervals are labelled `unknown`.
 
@@ -160,6 +167,7 @@ Content-family rules:
 | Known source ingested as `programme` | `programme_repeat` | No |
 | Long repeated audio/video material | `programme_repeat` | No |
 | Isolated unknown short repeated material | `short_repeat` | No |
+| Dispersed earlier excerpts replayed continuously later in the programme | `programme_recap` | No |
 | Multiple adjacent short repeated families | `short_repeat` | Yes, as `ad_break` |
 | Stable advertisement-edge marker | `break_out` or `break_in` | Defines a boundary; the marker itself remains programme content |
 | Known source ingested as `advertisement` | `advertisement` | Yes, as `ad_break` |
@@ -250,7 +258,11 @@ arguments.
 | `--programme-confirm-margin VALUE` | `0.02` | Amount subtracted from both programme thresholds when aligned audio and video confirm one another; range `0` to `1`. |
 | `--marker-max SEC` | `30` | Maximum duration of a short family eligible for automatic `break_out`/`break_in` recognition. |
 | `--marker-min-occurrences COUNT` | `3` | Minimum same-side occurrences required for automatic marker recognition; minimum `2`. |
-| `--no-programme-inference` | off | Omit `content_families`, `timeline`, and `programme_guesses` from the scan result. |
+| `--recap-min SEC` | `20` | Minimum amount of later continuous coverage required for a `programme_recap`. |
+| `--recap-gap SEC` | `5` | Maximum gap between later repeated excerpts before they are considered one recap. |
+| `--recap-source-lead SEC` | `60` | Minimum time by which the earlier source excerpts must precede the recap; also the minimum span of separated source material. |
+| `--recap-min-excerpts COUNT` | `2` | Minimum number of separated earlier source excerpts required for a recap; minimum `2`. |
+| `--no-programme-inference` | off | Omit `content_families`, `timeline`, `programme_guesses`, and `programme_recaps` from the scan result. |
 
 These programme thresholds are applied after candidate search. Keep
 `--threshold` at or below the lowest similarity that programme inference needs
@@ -290,12 +302,13 @@ times, content type, and FFmpeg packet byte positions. `database_vector_count` i
 used for matching; stored scans additionally include
 `database_vector_count_after`.
 
-The output also contains `content_families`, a continuous `timeline`, and
-`programme_guesses`. Timeline labels are `programme`, `ad_break`, and
-`unknown`. Content-family classifications additionally include `break_out` and
-`break_in`. Every inferred segment includes confidence, boundary uncertainty,
-repeat coverage, audio/video-confirmed coverage, marker family IDs, and
-byte/time boundaries.
+The output also contains `content_families`, a continuous `timeline`,
+`programme_guesses`, and `programme_recaps`. Timeline labels are `programme`,
+`ad_break`, and `unknown`; recap regions remain programme-labelled timeline
+content and are listed separately. Content-family classifications additionally
+include `break_out`, `break_in`, and `programme_recap`. Every inferred segment
+includes confidence, boundary uncertainty, repeat coverage,
+audio/video-confirmed coverage, marker family IDs, and byte/time boundaries.
 
 ## Accuracy and performance notes
 

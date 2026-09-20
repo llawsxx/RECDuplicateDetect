@@ -12,6 +12,7 @@ struct ProgrammeInferenceOptions {
   double maximum_short_repeat_seconds = 180.0;
   double ad_block_gap_seconds = 20.0;
   double minimum_ad_break_seconds = 10.0;
+  std::size_t minimum_ad_occurrences = 2;
   double feature_alignment_tolerance_seconds = 3.0;
   double minimum_audio_similarity = 0.985;
   double minimum_video_similarity = 0.985;

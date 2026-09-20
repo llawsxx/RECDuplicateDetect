@@ -245,6 +245,7 @@ arguments.
 | `--short-repeat-max SEC` | `180` | Maximum typical family duration considered short-content evidence. Longer families are treated as programme repeats. |
 | `--ad-block-gap SEC` | `20` | Maximum gap between short repeated items before they are merged into one break. |
 | `--ad-break-min SEC` | `10` | Minimum duration of an automatically inferred `ad_break`; `0` disables the minimum. Known advertisements and breaks bounded by explicitly catalogued markers are exempt. |
+| `--ad-min-occurrences COUNT` | `2` | Minimum number of distinct appearances required before an unknown short-content family can provide automatic advertisement evidence. `2` means the original appearance plus one repeat. Known advertisements are exempt; minimum `2`. |
 | `--programme-audio-threshold VALUE` | `0.985` | Minimum audio similarity accepted as independent programme-inference evidence; range `0` to `1`. |
 | `--programme-video-threshold VALUE` | `0.985` | Minimum video similarity accepted as independent programme-inference evidence; range `0` to `1`. Video-only evidence remains `visual_reuse`. |
 | `--programme-confirm-margin VALUE` | `0.02` | Amount subtracted from both programme thresholds when aligned audio and video confirm one another; range `0` to `1`. |

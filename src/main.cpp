@@ -97,6 +97,7 @@ void usage(std::ostream& output) {
       "  --short-repeat-max SEC  Maximum short repeat (default: 180)\n"
       "  --ad-block-gap SEC      Join short repeats into a break (default: 20)\n"
       "  --ad-break-min SEC      Minimum inferred ad break (default: 10)\n"
+      "  --ad-min-occurrences N  Minimum appearances per auto ad (default: 2)\n"
       "  --programme-audio-threshold VALUE (default: 0.985)\n"
       "  --programme-video-threshold VALUE (default: 0.985)\n"
       "  --programme-confirm-margin VALUE (default: 0.02)\n"
@@ -254,6 +255,12 @@ recdup::ProgrammeInferenceOptions inferenceOptions(
       optional(arguments, "--ad-block-gap", "20"), "ad-block-gap");
   options.minimum_ad_break_seconds = parseNumber<double>(
       optional(arguments, "--ad-break-min", "10"), "ad-break-min");
+  const std::string ad_occurrences =
+      optional(arguments, "--ad-min-occurrences", "2");
+  if (ad_occurrences.empty() || ad_occurrences.front() == '-')
+    throw std::runtime_error("--ad-min-occurrences must be at least 2");
+  options.minimum_ad_occurrences = parseNumber<std::size_t>(
+      ad_occurrences, "ad-min-occurrences");
   options.minimum_audio_similarity = parseNumber<double>(
       optional(arguments, "--programme-audio-threshold", "0.985"),
       "programme-audio-threshold");
@@ -279,6 +286,8 @@ recdup::ProgrammeInferenceOptions inferenceOptions(
   if (!std::isfinite(options.minimum_ad_break_seconds) ||
       options.minimum_ad_break_seconds < 0.0)
     throw std::runtime_error("--ad-break-min must be zero or positive");
+  if (options.minimum_ad_occurrences < 2)
+    throw std::runtime_error("--ad-min-occurrences must be at least 2");
   if (!std::isfinite(options.minimum_audio_similarity) ||
       options.minimum_audio_similarity < 0.0 ||
       options.minimum_audio_similarity > 1.0)

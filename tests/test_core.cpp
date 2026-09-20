@@ -293,6 +293,40 @@ void testProgrammeInference() {
         segment.end_seconds == 515.0)
       found_known_ad = true;
   expect(found_known_ad, "known advertisement must form an ad break alone");
+
+  recdup::ProgrammeInferenceOptions three_occurrences;
+  three_occurrences.minimum_ad_occurrences = 3;
+  const auto stricter_occurrence_result =
+      recdup::inferProgrammeTimeline(media, matches, three_occurrences);
+  bool stricter_found_automatic = false;
+  bool stricter_found_catalogued = false;
+  for (const auto& segment : stricter_occurrence_result.timeline) {
+    if (segment.label != "ad_break") continue;
+    stricter_found_automatic |= segment.start_seconds == 100.0 &&
+                                segment.end_seconds == 170.0;
+    stricter_found_catalogued |= segment.start_seconds == 500.0 &&
+                                segment.end_seconds == 515.0;
+  }
+  expect(!stricter_found_automatic,
+         "ad occurrence minimum did not filter twice-seen unknown content");
+  expect(stricter_found_catalogued,
+         "ad occurrence minimum filtered a catalogued advertisement");
+
+  const std::vector<recdup::MatchSpan> frequent_repeats{
+      repeatMatch(recdup::FeatureKind::AudioSpectrum, 100, 300, 10, 0.998F),
+      repeatMatch(recdup::FeatureKind::AudioSpectrum, 100, 500, 10, 0.998F),
+      repeatMatch(recdup::FeatureKind::AudioSpectrum, 110, 310, 10, 0.998F),
+      repeatMatch(recdup::FeatureKind::AudioSpectrum, 110, 510, 10, 0.998F)};
+  const auto frequent_result = recdup::inferProgrammeTimeline(
+      media, frequent_repeats, three_occurrences);
+  bool frequent_found_break = false;
+  for (const auto& segment : frequent_result.timeline)
+    if (segment.label == "ad_break" && segment.start_seconds == 100.0 &&
+        segment.end_seconds == 120.0)
+      frequent_found_break = true;
+  expect(frequent_found_break,
+         "three-appearance families did not provide advertisement evidence");
+
   bool found_programme = false;
   for (const auto& segment : inference.programme_guesses)
     if (segment.start_seconds == 170.0 && segment.end_seconds == 300.0)

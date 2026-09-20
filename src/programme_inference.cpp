@@ -214,6 +214,7 @@ ProgrammeInference inferProgrammeTimeline(
       options.ad_block_gap_seconds < 0.0 ||
       !std::isfinite(options.minimum_ad_break_seconds) ||
       options.minimum_ad_break_seconds < 0.0 ||
+      options.minimum_ad_occurrences < 2 ||
       options.feature_alignment_tolerance_seconds < 0.0 ||
       !std::isfinite(options.minimum_audio_similarity) ||
       options.minimum_audio_similarity < 0.0 ||
@@ -431,6 +432,8 @@ ProgrammeInference inferProgrammeTimeline(
         family.known_content_type == "advertisement";
     if ((!known_advertisement && family.classification != "short_repeat") ||
         family.confidence < 0.75 ||
+        (!known_advertisement &&
+         family.occurrences.size() < options.minimum_ad_occurrences) ||
         (!known_advertisement &&
          family.typical_duration_seconds > options.maximum_short_repeat_seconds))
       continue;

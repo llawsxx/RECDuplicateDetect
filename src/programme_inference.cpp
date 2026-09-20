@@ -215,6 +215,7 @@ ProgrammeInference inferProgrammeTimeline(
       !std::isfinite(options.minimum_ad_break_seconds) ||
       options.minimum_ad_break_seconds < 0.0 ||
       options.minimum_ad_occurrences < 2 ||
+      options.minimum_ad_families < 1 ||
       options.feature_alignment_tolerance_seconds < 0.0 ||
       !std::isfinite(options.minimum_audio_similarity) ||
       options.minimum_audio_similarity < 0.0 ||
@@ -508,7 +509,8 @@ ProgrammeInference inferProgrammeTimeline(
       families.insert(item.family);
       known_advertisement |= item.known_advertisement;
     }
-    return known_advertisement || families.size() >= 2;
+    return known_advertisement ||
+           families.size() >= options.minimum_ad_families;
   };
 
   // A repeated short family is inferred as a transition marker only when it
@@ -643,7 +645,8 @@ ProgrammeInference inferProgrammeTimeline(
       known_advertisement |= item.known_advertisement;
     }
     if (!has_non_marker || end <= start ||
-        (!known_advertisement && non_marker_families.size() < 2))
+        (!known_advertisement &&
+         non_marker_families.size() < options.minimum_ad_families))
       continue;
 
     const MarkerOccurrence* preceding = nullptr;

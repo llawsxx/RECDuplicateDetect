@@ -112,8 +112,10 @@ Programme inference is enabled for `scan` by default. It treats strong audio
 matches and audio/video-confirmed matches as short-content evidence. Video-only
 repeats are reported as `visual_reuse` and do not split a programme, which keeps
 reused establishing shots and studio layouts from becoming false ad breaks.
-An isolated short repeat is retained as evidence but does not split the
-timeline. Repeated transition clips can be recognized as `break_out` or
+By default, an isolated short repeat is retained as evidence but does not split
+the timeline. `--ad-min-families 1` allows it to form an ad break after the
+occurrence, similarity, and duration checks pass. Repeated transition clips can
+be recognized as `break_out` or
 `break_in` markers, and catalogued markers provide reliable advertisement
 boundaries even when the intervening advertisements have not repeated.
 Matches against sources ingested as `advertisement` are high-confidence ad-break
@@ -140,9 +142,10 @@ long continuous intervals as probable programme time.
    several airings of the same advertisement, a repeated programme excerpt,
    or a video-only reused shot.
 4. Short repeated families are grouped when their recording intervals are no
-   more than `--ad-block-gap` apart. Multiple adjacent families form an
-   `ad_break`; an isolated unknown family is reported but does not cut the
-   timeline.
+   more than `--ad-block-gap` apart. A block forms an `ad_break` when it has at
+   least `--ad-min-families` eligible families. The default is two; set it to
+   one when occurrence filtering and a recent recording database provide
+   sufficiently strong evidence.
 5. Stable short families at the leading or trailing edge of several ad-like
    blocks can be classified as `break_out` or `break_in`. A marker remains on
    the programme side of the boundary.
@@ -165,8 +168,8 @@ Content-family rules:
 | Video-only repeated material | `visual_reuse` | No |
 | Known source ingested as `programme` | `programme_repeat` | No |
 | Long repeated audio/video material | `programme_repeat` | No |
-| Isolated unknown short repeated material | `short_repeat` | No |
-| Multiple adjacent short repeated families | `short_repeat` | Yes, as `ad_break` |
+| Unknown short repeated material below `--ad-min-families` | `short_repeat` | No |
+| Enough eligible short repeated families | `short_repeat` | Yes, as `ad_break` |
 | Stable advertisement-edge marker | `break_out` or `break_in` | Defines a boundary; the marker itself remains programme content |
 | Known source ingested as `advertisement` | `advertisement` | Yes, as `ad_break` |
 
@@ -185,8 +188,9 @@ Automatic marker recognition is conservative. By default, a clip must be no
 longer than 30 seconds, occur at least three times at the same side of ad-like
 blocks, and have changing inward neighbors. An automatically recognized marker
 can only refine the boundaries of an `ad_break` already established by a known
-advertisement or at least two non-marker short-repeat families; it cannot create
-an `ad_break` by itself. A pair explicitly ingested as `break_out` and
+advertisement or at least `--ad-min-families` non-marker short-repeat families;
+it cannot create an `ad_break` by itself. A pair explicitly ingested as
+`break_out` and
 `break_in` can establish a break without other evidence. Tune the automatic
 limits with `--marker-max` and `--marker-min-occurrences`.
 
@@ -253,6 +257,7 @@ arguments.
 | `--ad-block-gap SEC` | `20` | Maximum gap between short repeated items before they are merged into one break. |
 | `--ad-break-min SEC` | `10` | Minimum duration of an automatically inferred `ad_break`; `0` disables the minimum. Known advertisements and breaks bounded by explicitly catalogued markers are exempt. |
 | `--ad-min-occurrences COUNT` | `2` | Minimum number of distinct appearances required before an unknown short-content family can provide automatic advertisement evidence. `2` means the original appearance plus one repeat. Known advertisements are exempt; minimum `2`. |
+| `--ad-min-families COUNT` | `2` | Minimum number of distinct eligible short-content families required in one automatically inferred `ad_break`; minimum `1`. Set to `1` to allow one sufficiently frequent unknown family to form a break. Known advertisements are exempt. |
 | `--programme-audio-threshold VALUE` | `0.93` | Minimum audio similarity accepted as independent programme-inference evidence; range `0` to `1`. Overlapping audio windows reduce boundary-alignment sensitivity. |
 | `--programme-video-threshold VALUE` | `0.985` | Minimum video similarity accepted as independent programme-inference evidence; range `0` to `1`. Video-only evidence remains `visual_reuse`. |
 | `--programme-confirm-margin VALUE` | `0.02` | Amount subtracted from both programme thresholds when aligned audio and video confirm one another; range `0` to `1`. |

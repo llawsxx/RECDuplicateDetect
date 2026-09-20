@@ -4,6 +4,7 @@
 #include "recdup/timestamp_normalizer.hpp"
 #include "recdup/vector_database.hpp"
 
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -352,6 +353,29 @@ void testProgrammeInference() {
       frequent_found_break = true;
   expect(frequent_found_break,
          "three-appearance families did not provide advertisement evidence");
+
+  const std::vector<recdup::MatchSpan> one_frequent_family{
+      repeatMatch(recdup::FeatureKind::AudioSpectrum, 100, 300, 10, 0.998F),
+      repeatMatch(recdup::FeatureKind::AudioSpectrum, 100, 500, 10, 0.998F)};
+  const auto conservative_single_result = recdup::inferProgrammeTimeline(
+      media, one_frequent_family, three_occurrences);
+  expect(std::none_of(conservative_single_result.timeline.begin(),
+                      conservative_single_result.timeline.end(),
+                      [](const recdup::TimelineSegment& segment) {
+                        return segment.label == "ad_break";
+                      }),
+         "the default family minimum accepted a single unknown family");
+  auto allow_single_family = three_occurrences;
+  allow_single_family.minimum_ad_families = 1;
+  const auto single_family_result = recdup::inferProgrammeTimeline(
+      media, one_frequent_family, allow_single_family);
+  const auto single_family_breaks = static_cast<std::size_t>(std::count_if(
+      single_family_result.timeline.begin(), single_family_result.timeline.end(),
+      [](const recdup::TimelineSegment& segment) {
+        return segment.label == "ad_break";
+      }));
+  expect(single_family_breaks == 3,
+         "configured family minimum did not accept one frequent family");
 
   bool found_programme = false;
   for (const auto& segment : inference.programme_guesses)

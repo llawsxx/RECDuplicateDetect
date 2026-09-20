@@ -455,48 +455,6 @@ void testBreakMarkers() {
          "an automatic marker blocked a catalogued marker pair");
 }
 
-void testProgrammeRecapInference() {
-  const auto media = timelineMedia(1200);
-  const std::vector<recdup::MatchSpan> recap_matches{
-      repeatMatch(recdup::FeatureKind::AudioSpectrum, 100, 1000, 8, 0.998F),
-      repeatMatch(recdup::FeatureKind::AudioSpectrum, 300, 1008, 8, 0.998F),
-      repeatMatch(recdup::FeatureKind::AudioSpectrum, 600, 1016, 8, 0.998F)};
-  const auto recap = recdup::inferProgrammeTimeline(media, recap_matches);
-  expect(recap.programme_recaps.size() == 1 &&
-             recap.programme_recaps.front().start_seconds == 1000.0 &&
-             recap.programme_recaps.front().end_seconds == 1024.0,
-         "dispersed earlier excerpts were not recognized as a recap");
-  std::size_t recap_families = 0;
-  for (const auto& family : recap.content_families)
-    if (family.classification == "programme_recap") ++recap_families;
-  expect(recap_families == 3,
-         "recap source families were not classified as programme recap");
-  for (const auto& segment : recap.timeline)
-    expect(segment.label != "ad_break",
-           "programme recap incorrectly split the programme timeline");
-  const auto recap_json =
-      recdup::makeResultJson(media, recap_matches, 0, false, 0, &recap);
-  expect(recap_json.find("\"programme_recaps\": [\n") !=
-             std::string::npos &&
-             recap_json.find("\"label\": \"programme_recap\"") !=
-                 std::string::npos,
-         "programme recap is missing from JSON");
-
-  const std::vector<recdup::MatchSpan> repeated_block{
-      repeatMatch(recdup::FeatureKind::AudioSpectrum, 100, 500, 10, 0.998F),
-      repeatMatch(recdup::FeatureKind::AudioSpectrum, 110, 510, 10, 0.998F)};
-  const auto block = recdup::inferProgrammeTimeline(media, repeated_block);
-  expect(block.programme_recaps.empty(),
-         "a normally repeated contiguous block was classified as a recap");
-  bool found_ad_break = false;
-  for (const auto& segment : block.timeline)
-    if (segment.label == "ad_break" && segment.start_seconds == 100.0 &&
-        segment.end_seconds == 120.0)
-      found_ad_break = true;
-  expect(found_ad_break,
-         "a normally repeated block stopped producing advertisement evidence");
-}
-
 void testMinimumAdBreakDuration() {
   const auto media = timelineMedia(500);
   const std::vector<recdup::MatchSpan> matches{
@@ -550,7 +508,6 @@ int main() {
     testTimestampNormalization();
     testProgrammeInference();
     testBreakMarkers();
-    testProgrammeRecapInference();
     testMinimumAdBreakDuration();
     std::cout << "All recdup core tests passed.\n";
     return 0;

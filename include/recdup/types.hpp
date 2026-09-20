@@ -132,7 +132,6 @@ struct ProgrammeInference {
   std::vector<ContentFamily> content_families;
   std::vector<TimelineSegment> timeline;
   std::vector<TimelineSegment> programme_guesses;
-  std::vector<TimelineSegment> programme_recaps;
 };
 
 }  // namespace recdup

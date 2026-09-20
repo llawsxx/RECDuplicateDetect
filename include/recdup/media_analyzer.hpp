@@ -13,6 +13,7 @@ enum class AnalysisMode { Auto, Video, Audio, Both };
 struct AnalyzerOptions {
   AnalysisMode mode = AnalysisMode::Auto;
   double bucket_seconds = 1.0;
+  double audio_hop_seconds = 0.5;
   bool extract_perceptual_video = true;
   bool repair_timestamp_discontinuities = true;
   double timestamp_jump_threshold_seconds = 10.0;

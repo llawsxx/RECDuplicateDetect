@@ -58,6 +58,32 @@ void testBaseVectorsAndAlignment() {
     }
   }
   expect(found, "expected ten-second offset-aligned run");
+
+  auto overlapping_media = syntheticMedia();
+  recdup::FeatureBucket first_audio;
+  first_audio.start_seconds = 0.0;
+  first_audio.end_seconds = 1.0;
+  first_audio.start_byte = 0;
+  first_audio.end_byte = 999;
+  first_audio.audio = {1.0F, 2.0F};
+  first_audio.has_audio = true;
+  overlapping_media.audio_buckets.push_back(first_audio);
+  auto second_audio = first_audio;
+  second_audio.start_seconds = 0.5;
+  second_audio.end_seconds = 1.5;
+  second_audio.start_byte = 500;
+  second_audio.end_byte = 1499;
+  overlapping_media.audio_buckets.push_back(second_audio);
+  const auto overlapping_vectors =
+      recdup::buildBaseVectors(overlapping_media, "test");
+  expect(overlapping_vectors.size() == 22,
+         "separate audio windows did not replace bucket audio");
+  const auto& overlap_vector = overlapping_vectors.back();
+  expect(overlap_vector.kind == recdup::FeatureKind::AudioSpectrum &&
+             overlap_vector.extractor_id == "spectrum-audio-v2:d128" &&
+             overlap_vector.start_seconds == 0.5 &&
+             overlap_vector.end_seconds == 1.5,
+         "overlapping audio vector metadata is wrong");
 }
 
 void testDatabaseRoundTrip() {
@@ -338,12 +364,12 @@ void testProgrammeInference() {
          "programme inference missing from JSON");
 
   const std::vector<recdup::MatchSpan> borderline_audio{
-      repeatMatch(recdup::FeatureKind::AudioSpectrum, 250, 450, 10, 0.97F)};
+      repeatMatch(recdup::FeatureKind::AudioSpectrum, 250, 450, 10, 0.92F)};
   expect(recdup::inferProgrammeTimeline(media, borderline_audio)
              .content_families.empty(),
          "default audio evidence threshold accepted a weak match");
   recdup::ProgrammeInferenceOptions relaxed_audio;
-  relaxed_audio.minimum_audio_similarity = 0.96;
+  relaxed_audio.minimum_audio_similarity = 0.91;
   const auto isolated_repeat =
       recdup::inferProgrammeTimeline(media, borderline_audio, relaxed_audio);
   expect(isolated_repeat.content_families.size() == 1,
@@ -355,7 +381,7 @@ void testProgrammeInference() {
          "an isolated short repeat split the programme timeline");
 
   const std::vector<recdup::MatchSpan> paired_borderline{
-      repeatMatch(recdup::FeatureKind::AudioSpectrum, 250, 450, 10, 0.97F),
+      repeatMatch(recdup::FeatureKind::AudioSpectrum, 250, 450, 10, 0.915F),
       repeatMatch(recdup::FeatureKind::VideoPerceptual, 250, 450, 10, 0.97F)};
   expect(recdup::inferProgrammeTimeline(media, paired_borderline)
              .content_families.size() == 1,

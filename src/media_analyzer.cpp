@@ -30,6 +30,11 @@ namespace recdup {
 MediaAnalyzer::MediaAnalyzer(AnalyzerOptions options) : options_(options) {
   if (options_.bucket_seconds <= 0.0)
     throw std::invalid_argument("bucket duration must be positive");
+  if (!std::isfinite(options_.audio_hop_seconds) ||
+      options_.audio_hop_seconds <= 0.0 ||
+      options_.audio_hop_seconds > options_.bucket_seconds)
+    throw std::invalid_argument(
+        "audio feature step must be positive and no longer than the window");
   if (options_.timestamp_jump_threshold_seconds <= 0.0 ||
       options_.timestamp_backwards_tolerance_seconds < 0.0)
     throw std::invalid_argument("timestamp repair thresholds are invalid");
@@ -415,13 +420,82 @@ MediaFeatures MediaAnalyzer::analyze(const std::string& input_path,
     if (accumulators.size() <= index) accumulators.resize(index + 1);
     return accumulators[index];
   };
+  std::vector<FeatureBucket> audio_buckets;
+  std::vector<float> previous_audio_samples;
+  std::size_t previous_audio_index = std::numeric_limits<std::size_t>::max();
+  const auto audio_window_samples = static_cast<std::size_t>(
+      std::max(1.0, std::round(options_.bucket_seconds * kAudioRate)));
+  auto byteAtFraction = [](const Accumulator& source, double fraction) {
+    if (source.start_byte == std::numeric_limits<std::int64_t>::max() ||
+        source.end_byte < source.start_byte)
+      return std::int64_t{-1};
+    fraction = std::clamp(fraction, 0.0, 1.0);
+    return source.start_byte + static_cast<std::int64_t>(std::llround(
+                                   (source.end_byte - source.start_byte) *
+                                   fraction));
+  };
+  auto emitAudioWindows = [&](std::size_t index,
+                              const std::vector<float>& first,
+                              const Accumulator* second) {
+    if (first.empty()) return;
+    std::vector<float> samples;
+    samples.reserve(first.size() +
+                    (second == nullptr ? 0 : second->audio_samples.size()));
+    samples.insert(samples.end(), first.begin(), first.end());
+    if (second != nullptr)
+      samples.insert(samples.end(), second->audio_samples.begin(),
+                     second->audio_samples.end());
+
+    const double interval_start = index * options_.bucket_seconds;
+    const double interval_end = interval_start + options_.bucket_seconds;
+    const auto first_step = static_cast<std::int64_t>(std::ceil(
+        (interval_start - 1.0e-9) / options_.audio_hop_seconds));
+    for (std::int64_t step = std::max<std::int64_t>(0, first_step);;
+         ++step) {
+      const double start = step * options_.audio_hop_seconds;
+      if (start >= interval_end - 1.0e-9) break;
+      const auto sample_offset = static_cast<std::size_t>(std::max(
+          0.0, std::round((start - interval_start) * kAudioRate)));
+      if (sample_offset + audio_window_samples > samples.size()) continue;
+
+      FeatureBucket bucket;
+      bucket.start_seconds = start;
+      bucket.end_seconds = start + options_.bucket_seconds;
+      const double start_fraction =
+          first.empty() ? 0.0
+                        : sample_offset / static_cast<double>(first.size());
+      bucket.start_byte = byteAtFraction(accumulators[index], start_fraction);
+      const auto end_offset = sample_offset + audio_window_samples;
+      if (end_offset <= first.size()) {
+        bucket.end_byte = byteAtFraction(
+            accumulators[index], end_offset / static_cast<double>(first.size()));
+      } else if (second != nullptr && !second->audio_samples.empty()) {
+        bucket.end_byte = byteAtFraction(
+            *second, (end_offset - first.size()) /
+                         static_cast<double>(second->audio_samples.size()));
+      }
+      bucket.audio = audioFeature(
+          samples.data() + static_cast<std::ptrdiff_t>(sample_offset),
+          static_cast<int>(audio_window_samples));
+      bucket.has_audio = true;
+      audio_buckets.push_back(std::move(bucket));
+    }
+  };
   auto finalizeAudioBucket = [&](std::size_t index) {
     if (index >= accumulators.size()) return;
     auto& accumulator = accumulators[index];
     if (accumulator.audio_samples.empty()) return;
     accumulator.audio = audioFeature(accumulator.audio_samples.data(),
                                      static_cast<int>(accumulator.audio_samples.size()));
-    std::vector<float>().swap(accumulator.audio_samples);
+    if (previous_audio_index != std::numeric_limits<std::size_t>::max()) {
+      if (previous_audio_index + 1 == index)
+        emitAudioWindows(previous_audio_index, previous_audio_samples,
+                         &accumulator);
+      else
+        emitAudioWindows(previous_audio_index, previous_audio_samples, nullptr);
+    }
+    previous_audio_samples = std::move(accumulator.audio_samples);
+    previous_audio_index = index;
   };
 
   const double origin = format->start_time == AV_NOPTS_VALUE
@@ -624,6 +698,8 @@ MediaFeatures MediaAnalyzer::analyze(const std::string& input_path,
   }
   for (std::size_t i = 0; i < accumulators.size(); ++i)
     finalizeAudioBucket(i);
+  if (previous_audio_index != std::numeric_limits<std::size_t>::max())
+    emitAudioWindows(previous_audio_index, previous_audio_samples, nullptr);
   MediaFeatures result;
   const auto input_fs_path = std::filesystem::u8path(input_path);
   result.input_path = std::filesystem::absolute(input_fs_path).u8string();
@@ -662,6 +738,7 @@ MediaFeatures MediaAnalyzer::analyze(const std::string& input_path,
     }
     result.buckets.push_back(std::move(bucket));
   }
+  result.audio_buckets = std::move(audio_buckets);
   if (options_.progress_callback)
     options_.progress_callback(result.duration_seconds, result.duration_seconds);
   return result;

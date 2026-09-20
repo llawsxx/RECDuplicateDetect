@@ -201,12 +201,19 @@ float cosineSimilarity(const std::vector<float>& a,
 std::vector<FeatureVector> buildBaseVectors(const MediaFeatures& media,
                                             const std::string& source_name) {
   std::vector<FeatureVector> result;
-  result.reserve(media.buckets.size() * 3);
+  result.reserve(media.buckets.size() * 2 + media.audio_buckets.size());
+  const bool has_separate_audio_windows = !media.audio_buckets.empty();
   for (const auto& bucket : media.buckets) {
     if (bucket.has_video)
       appendVector(result, media, source_name, bucket,
                    FeatureKind::VideoPerceptual,
                    "perceptual-video-v2:d128", bucket.video);
+    if (bucket.has_audio && !has_separate_audio_windows)
+      appendVector(result, media, source_name, bucket,
+                   FeatureKind::AudioSpectrum,
+                   "spectrum-audio-v2:d128", bucket.audio);
+  }
+  for (const auto& bucket : media.audio_buckets) {
     if (bucket.has_audio)
       appendVector(result, media, source_name, bucket,
                    FeatureKind::AudioSpectrum,

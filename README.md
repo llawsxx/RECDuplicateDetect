@@ -21,7 +21,11 @@ FFmpeg packets
   -> JSON duplicate spans and programme guesses
 ```
 
-Features are extracted in one-second buckets. `--min-duration` controls the
+Video features are extracted in one-second buckets. Audio uses one-second
+windows with a configurable movement step (`--audio-hop`, default `0.5`
+seconds), providing 50% overlap by default so a repeat is less sensitive to
+where it falls relative to the recording clock.
+`--min-duration` controls the
 minimum duration reported for an aligned repeated segment.
 
 ## Build
@@ -126,7 +130,8 @@ long continuous intervals as probable programme time.
 
 1. Each decoded recording is divided into one-second buckets. Every bucket
    contains timestamps, packet byte ranges, and independently computed audio
-   and video base vectors.
+   and video base vectors. Audio windows move by `--audio-hop`; the default
+   one-second window and half-second step give consecutive vectors 50% overlap.
 2. Approximate-nearest-neighbor search finds candidate vector matches. The
    candidates are aligned by `reference_time - query_time`; only anchors with
    a stable offset and a continuous run longer than `--min-duration` become a
@@ -146,8 +151,9 @@ long continuous intervals as probable programme time.
    complement intervals are labelled `unknown`.
 
 The inference evidence is deliberately stricter than the general matching
-threshold. By default, an audio family or a video family must reach `0.985`.
-An aligned audio/video pair can confirm one another at `0.965`, because the
+threshold. By default, an audio family must reach `0.93` and a video family
+must reach `0.985`. An aligned audio/video pair can confirm one another below
+those thresholds, because the
 default confirmation margin is `0.02`. Configure these values with
 `--programme-audio-threshold`, `--programme-video-threshold`, and
 `--programme-confirm-margin`.
@@ -221,6 +227,7 @@ arguments.
 | `--id TEXT` | generated from absolute path and file size | Stable source ID. Reusing it during ingest or `--store` replaces that source's vectors. |
 | `--content-type TYPE` | `unknown` for `ingest`, `recording` for `scan` | One of `advertisement`, `programme`, `break_out`, `break_in`, `recording`, or `unknown`. Stored once per source and returned in match JSON. |
 | `--mode auto\|video\|audio\|both` | `auto` | Select streams and feature kinds. `both` requires decodable audio and video. |
+| `--audio-hop SEC` | `0.5` | Movement step for each one-second audio feature window; range greater than `0` through `1`. Use `1` for no overlap, `0.5` for 50% overlap, or `0.25` for 75% overlap. Smaller values increase processing time, vector count, and database size. Use the same value for database ingestion and later scans for the most stable alignment. |
 | `--timestamp-jump SEC` | `10` | Repair a forward PTS jump larger than this threshold. Backward jumps over the fixed 1-second tolerance are also repaired. |
 | `--no-timestamp-repair` | off | Keep original discontinuous PTS values. Useful for diagnosing source timestamps, usually not recommended for matching. |
 | `--no-progress` | off | Disable progress output on stderr. |
@@ -246,7 +253,7 @@ arguments.
 | `--ad-block-gap SEC` | `20` | Maximum gap between short repeated items before they are merged into one break. |
 | `--ad-break-min SEC` | `10` | Minimum duration of an automatically inferred `ad_break`; `0` disables the minimum. Known advertisements and breaks bounded by explicitly catalogued markers are exempt. |
 | `--ad-min-occurrences COUNT` | `2` | Minimum number of distinct appearances required before an unknown short-content family can provide automatic advertisement evidence. `2` means the original appearance plus one repeat. Known advertisements are exempt; minimum `2`. |
-| `--programme-audio-threshold VALUE` | `0.985` | Minimum audio similarity accepted as independent programme-inference evidence; range `0` to `1`. |
+| `--programme-audio-threshold VALUE` | `0.93` | Minimum audio similarity accepted as independent programme-inference evidence; range `0` to `1`. Overlapping audio windows reduce boundary-alignment sensitivity. |
 | `--programme-video-threshold VALUE` | `0.985` | Minimum video similarity accepted as independent programme-inference evidence; range `0` to `1`. Video-only evidence remains `visual_reuse`. |
 | `--programme-confirm-margin VALUE` | `0.02` | Amount subtracted from both programme thresholds when aligned audio and video confirm one another; range `0` to `1`. |
 | `--marker-max SEC` | `30` | Maximum duration of a short family eligible for automatic `break_out`/`break_in` recognition. |

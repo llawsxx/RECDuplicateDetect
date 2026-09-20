@@ -84,6 +84,7 @@ void usage(std::ostream& output) {
       "  --id TEXT               Stable source ID\n"
       "  --content-type TYPE     advertisement|programme|break_out|break_in|recording|unknown\n"
       "  --mode auto|video|audio|both (default: auto)\n"
+      "  --audio-hop SEC         Audio feature step, <= 1 (default: 0.5)\n"
       "  --timestamp-jump SEC    Repair jumps larger than this (default: 10)\n"
       "  --no-timestamp-repair   Keep original discontinuous timestamps\n"
       "  --no-progress           Disable analysis progress output\n\n"
@@ -98,7 +99,7 @@ void usage(std::ostream& output) {
       "  --ad-block-gap SEC      Join short repeats into a break (default: 20)\n"
       "  --ad-break-min SEC      Minimum inferred ad break (default: 10)\n"
       "  --ad-min-occurrences N  Minimum appearances per auto ad (default: 2)\n"
-      "  --programme-audio-threshold VALUE (default: 0.985)\n"
+      "  --programme-audio-threshold VALUE (default: 0.93)\n"
       "  --programme-video-threshold VALUE (default: 0.985)\n"
       "  --programme-confirm-margin VALUE (default: 0.02)\n"
       "  --marker-max SEC        Maximum auto marker length (default: 30)\n"
@@ -262,7 +263,7 @@ recdup::ProgrammeInferenceOptions inferenceOptions(
   options.minimum_ad_occurrences = parseNumber<std::size_t>(
       ad_occurrences, "ad-min-occurrences");
   options.minimum_audio_similarity = parseNumber<double>(
-      optional(arguments, "--programme-audio-threshold", "0.985"),
+      optional(arguments, "--programme-audio-threshold", "0.93"),
       "programme-audio-threshold");
   options.minimum_video_similarity = parseNumber<double>(
       optional(arguments, "--programme-video-threshold", "0.985"),
@@ -392,6 +393,12 @@ AnalyzedInput analyze(const Arguments& arguments) {
 
   recdup::AnalyzerOptions analyzer_options;
   analyzer_options.mode = parseMode(optional(arguments, "--mode", "auto"));
+  analyzer_options.audio_hop_seconds = parseNumber<double>(
+      optional(arguments, "--audio-hop", "0.5"), "audio-hop");
+  if (!std::isfinite(analyzer_options.audio_hop_seconds) ||
+      analyzer_options.audio_hop_seconds <= 0.0 ||
+      analyzer_options.audio_hop_seconds > analyzer_options.bucket_seconds)
+    throw std::runtime_error("--audio-hop must be greater than 0 and at most 1");
   analyzer_options.repair_timestamp_discontinuities =
       !arguments.flags.count("--no-timestamp-repair");
   analyzer_options.timestamp_jump_threshold_seconds = parseNumber<double>(

@@ -49,6 +49,7 @@ struct MediaFeatures {
   std::size_t dropped_packets = 0;
   std::vector<TimestampDiscontinuity> timestamp_discontinuities;
   std::vector<FeatureBucket> buckets;
+  std::vector<FeatureBucket> audio_buckets;
 };
 
 struct FeatureVector {

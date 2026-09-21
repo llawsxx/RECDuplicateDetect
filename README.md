@@ -71,7 +71,7 @@ Scan a long recording against the catalogue and its own history:
 
 ```powershell
 build\recdup.exe scan --db catalog.recdb --input recording.ts `
-  --mode both --min-duration 5 --threshold 0.90 --output result.json
+  --mode both --min-duration 5 --threshold 0.985 --output result.json
 ```
 
 Store the scanned recording after matching:
@@ -154,7 +154,7 @@ long continuous intervals as probable programme time.
    complement intervals are labelled `unknown`.
 
 The inference evidence is deliberately stricter than the general matching
-threshold. By default, an audio family must reach `0.93` and a video family
+threshold. By default, an audio family must reach `0.985` and a video family
 must reach `0.985`. An aligned audio/video pair can confirm one another below
 those thresholds, because the
 default confirmation margin is `0.02`. Configure these values with
@@ -242,7 +242,7 @@ command-line arguments.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `--threshold VALUE` | `0.90` | Cosine similarity threshold for vector candidate search; range `-1` to `1`. This is a recall threshold, not the stricter programme-inference evidence threshold. |
+| `--threshold VALUE` | `0.985` | Cosine similarity threshold for vector candidate search; range `-1` to `1`. This is a recall threshold, not the stricter programme-inference evidence threshold. |
 | `--min-duration SEC` | `5` | Minimum duration of an aligned duplicate span included in the result. |
 | `--top-k COUNT` | `12` | Number of nearest database vectors retained per query vector. Higher values improve recall but increase alignment work. |
 | `--max-gap SEC` | `2.5` | Maximum gap between consecutive query/reference anchors in one aligned run. |
@@ -260,7 +260,7 @@ command-line arguments.
 | `--ad-break-min SEC` | `10` | Minimum duration of an automatically inferred `ad_break`; `0` disables the minimum. Known advertisements and breaks bounded by explicitly catalogued markers are exempt. |
 | `--ad-min-occurrences COUNT` | `2` | Minimum number of distinct appearances required before an unknown short-content family can provide automatic advertisement evidence. `2` means the original appearance plus one repeat. Known advertisements are exempt; minimum `2`. |
 | `--ad-min-families COUNT` | `2` | Minimum number of distinct eligible short-content families required in one automatically inferred `ad_break`; minimum `1`. Set to `1` to allow one sufficiently frequent unknown family to form a break. Known advertisements are exempt. |
-| `--programme-audio-threshold VALUE` | `0.93` | Minimum audio similarity accepted as independent programme-inference evidence; range `0` to `1`. Overlapping audio windows reduce boundary-alignment sensitivity. |
+| `--programme-audio-threshold VALUE` | `0.985` | Minimum audio similarity accepted as independent programme-inference evidence; range `0` to `1`. Overlapping audio windows reduce boundary-alignment sensitivity. |
 | `--programme-video-threshold VALUE` | `0.985` | Minimum video similarity accepted as independent programme-inference evidence; range `0` to `1`. Video-only evidence remains `visual_reuse`. |
 | `--programme-confirm-margin VALUE` | `0.02` | Amount subtracted from both programme thresholds when aligned audio and video confirm one another; range `0` to `1`. |
 | `--marker-max SEC` | `30` | Maximum duration of a short family eligible for automatic `break_out`/`break_in` recognition. |
@@ -269,7 +269,7 @@ command-line arguments.
 
 These programme thresholds are applied after candidate search. Keep
 `--threshold` at or below the lowest similarity that programme inference needs
-to see; for example, use `--threshold 0.90 --programme-audio-threshold 0.97`.
+to see; for example, use `--threshold 0.985 --programme-audio-threshold 0.985`.
 
 ### Output options
 

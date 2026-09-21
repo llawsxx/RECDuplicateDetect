@@ -15,7 +15,7 @@ struct ProgrammeInferenceOptions {
   std::size_t minimum_ad_occurrences = 2;
   std::size_t minimum_ad_families = 2;
   double feature_alignment_tolerance_seconds = 3.0;
-  double minimum_audio_similarity = 0.93;
+  double minimum_audio_similarity = 0.985;
   double minimum_video_similarity = 0.985;
   double audio_video_confirmation_margin = 0.02;
   double maximum_marker_seconds = 30.0;

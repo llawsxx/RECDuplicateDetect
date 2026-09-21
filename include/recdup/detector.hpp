@@ -11,7 +11,7 @@ std::vector<FeatureVector> buildBaseVectors(const MediaFeatures& media,
                                             const std::string& source_name);
 
 struct SearchOptions {
-  float minimum_similarity = 0.90F;
+  float minimum_similarity = 0.985F;
   std::size_t top_k = 12;
   bool find_internal_duplicates = true;
   double minimum_duration_seconds = 5.0;

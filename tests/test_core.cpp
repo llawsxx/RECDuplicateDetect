@@ -405,7 +405,7 @@ void testProgrammeInference() {
          "an isolated short repeat split the programme timeline");
 
   const std::vector<recdup::MatchSpan> paired_borderline{
-      repeatMatch(recdup::FeatureKind::AudioSpectrum, 250, 450, 10, 0.915F),
+      repeatMatch(recdup::FeatureKind::AudioSpectrum, 250, 450, 10, 0.97F),
       repeatMatch(recdup::FeatureKind::VideoPerceptual, 250, 450, 10, 0.97F)};
   expect(recdup::inferProgrammeTimeline(media, paired_borderline)
              .content_families.size() == 1,

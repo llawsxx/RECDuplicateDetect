@@ -90,7 +90,7 @@ void usage(std::ostream& output) {
       "  --no-progress           Disable analysis progress output\n\n"
       "Detection options:\n"
       "  --min-duration SEC      Minimum aligned repeat (default: 5)\n"
-      "  --threshold VALUE       Cosine threshold (default: 0.90)\n"
+      "  --threshold VALUE       Cosine threshold (default: 0.985)\n"
       "  --top-k COUNT           Neighbors per base vector (default: 12)\n"
       "  --max-gap SEC           Allowed gap between anchors (default: 2.5)\n"
       "  --offset-bin SEC        Alignment offset resolution (default: 1)\n"
@@ -100,7 +100,7 @@ void usage(std::ostream& output) {
       "  --ad-break-min SEC      Minimum inferred ad break (default: 10)\n"
       "  --ad-min-occurrences N  Minimum appearances per auto ad (default: 2)\n"
       "  --ad-min-families N     Minimum families per auto break (default: 2)\n"
-      "  --programme-audio-threshold VALUE (default: 0.93)\n"
+      "  --programme-audio-threshold VALUE (default: 0.985)\n"
       "  --programme-video-threshold VALUE (default: 0.985)\n"
       "  --programme-confirm-margin VALUE (default: 0.02)\n"
       "  --marker-max SEC        Maximum auto marker length (default: 30)\n"
@@ -187,7 +187,7 @@ void dumpMediaParameters(const Arguments& arguments, const std::string& input,
   if (arguments.command == "scan") {
     dumpParameter("--min-duration",
                   optional(arguments, "--min-duration", "5"));
-    dumpParameter("--threshold", optional(arguments, "--threshold", "0.90"));
+    dumpParameter("--threshold", optional(arguments, "--threshold", "0.985"));
     dumpParameter("--top-k", optional(arguments, "--top-k", "12"));
     dumpParameter("--max-gap", optional(arguments, "--max-gap", "2.5"));
     dumpParameter("--offset-bin", optional(arguments, "--offset-bin", "1"));
@@ -204,7 +204,7 @@ void dumpMediaParameters(const Arguments& arguments, const std::string& input,
     dumpParameter("--ad-min-families",
                   optional(arguments, "--ad-min-families", "2"));
     dumpParameter("--programme-audio-threshold",
-                  optional(arguments, "--programme-audio-threshold", "0.93"));
+                  optional(arguments, "--programme-audio-threshold", "0.985"));
     dumpParameter("--programme-video-threshold",
                   optional(arguments, "--programme-video-threshold", "0.985"));
     dumpParameter("--programme-confirm-margin",
@@ -305,7 +305,7 @@ std::string generatedId(const std::string& input_path) {
 recdup::SearchOptions searchOptions(const Arguments& arguments) {
   recdup::SearchOptions options;
   options.minimum_similarity = parseNumber<float>(
-      optional(arguments, "--threshold", "0.90"), "threshold");
+      optional(arguments, "--threshold", "0.985"), "threshold");
   options.top_k = parseNumber<std::size_t>(
       optional(arguments, "--top-k", "12"), "top-k");
   options.minimum_duration_seconds = parseNumber<double>(
@@ -349,7 +349,7 @@ recdup::ProgrammeInferenceOptions inferenceOptions(
   options.minimum_ad_families =
       parseNumber<std::size_t>(ad_families, "ad-min-families");
   options.minimum_audio_similarity = parseNumber<double>(
-      optional(arguments, "--programme-audio-threshold", "0.93"),
+      optional(arguments, "--programme-audio-threshold", "0.985"),
       "programme-audio-threshold");
   options.minimum_video_similarity = parseNumber<double>(
       optional(arguments, "--programme-video-threshold", "0.985"),

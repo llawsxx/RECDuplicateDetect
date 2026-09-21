@@ -1,0 +1,12 @@
+[
+  {
+    "enable": true,
+    "name": "local",
+    "folder": "E:\\test",
+    "output_folder": "E:\\testCUT",
+    "check_time": "00:05,03:05,06:05",
+    "params": "--mode audio --programme-min 110 --ad-break-min 52 --programme-audio-threshold 0.985",
+	  "delete_source": false,
+    "mtime_over": 3600
+  }
+]

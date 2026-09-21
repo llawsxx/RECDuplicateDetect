@@ -203,9 +203,11 @@ describe timeline geometry, not independent proof of a true edit point.
 
 ## Command-line parameters
 
-All commands print errors to stderr and return a non-zero exit code on invalid
-input or options. Paths may be quoted; Windows builds accept UTF-8 command-line
-arguments.
+Before doing database or media work, each command prints its effective
+parameters, including defaults and boolean switches, to stderr. JSON written to
+stdout therefore remains machine-readable. Errors also use stderr and return a
+non-zero exit code. Paths may be quoted; Windows builds accept UTF-8
+command-line arguments.
 
 ### Database commands
 

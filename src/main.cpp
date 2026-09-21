@@ -145,6 +145,85 @@ std::string optional(const Arguments& arguments, const std::string& key,
   return found == arguments.values.end() ? fallback : found->second;
 }
 
+std::string contentType(const Arguments& arguments);
+
+const char* booleanText(bool value) { return value ? "true" : "false"; }
+
+void dumpParameter(const std::string& name, const std::string& value) {
+  std::cerr << "  " << name << ": " << value << '\n';
+}
+
+void dumpDatabaseParameters(const Arguments& arguments) {
+  std::cerr << "Effective parameters:\n";
+  dumpParameter("command", arguments.command);
+  dumpParameter("--db", require(arguments, "--db"));
+  if (arguments.command == "init" || arguments.command == "configure")
+    dumpParameter("--max-recordings",
+                  optional(arguments, "--max-recordings", "0"));
+  std::cerr << '\n';
+}
+
+void dumpMediaParameters(const Arguments& arguments, const std::string& input,
+                         const std::string& name,
+                         const std::string& source_id) {
+  std::cerr << "Effective parameters:\n";
+  dumpParameter("command", arguments.command);
+  dumpParameter("--input", input);
+  dumpParameter("--db", optional(arguments, "--db", "<none>"));
+  dumpParameter("--name", name);
+  dumpParameter("--id", source_id);
+  dumpParameter("--content-type", contentType(arguments));
+  dumpParameter("--mode", optional(arguments, "--mode", "auto"));
+  dumpParameter("--audio-hop", optional(arguments, "--audio-hop", "0.5"));
+  dumpParameter("--timestamp-jump",
+                optional(arguments, "--timestamp-jump", "10"));
+  dumpParameter("--no-timestamp-repair",
+                booleanText(arguments.flags.count("--no-timestamp-repair") != 0));
+  dumpParameter("--no-progress",
+                booleanText(arguments.flags.count("--no-progress") != 0));
+  dumpParameter("--max-recordings",
+                optional(arguments, "--max-recordings", "<unchanged>"));
+
+  if (arguments.command == "scan") {
+    dumpParameter("--min-duration",
+                  optional(arguments, "--min-duration", "5"));
+    dumpParameter("--threshold", optional(arguments, "--threshold", "0.90"));
+    dumpParameter("--top-k", optional(arguments, "--top-k", "12"));
+    dumpParameter("--max-gap", optional(arguments, "--max-gap", "2.5"));
+    dumpParameter("--offset-bin", optional(arguments, "--offset-bin", "1"));
+    dumpParameter("--programme-min",
+                  optional(arguments, "--programme-min", "120"));
+    dumpParameter("--short-repeat-max",
+                  optional(arguments, "--short-repeat-max", "180"));
+    dumpParameter("--ad-block-gap",
+                  optional(arguments, "--ad-block-gap", "20"));
+    dumpParameter("--ad-break-min",
+                  optional(arguments, "--ad-break-min", "10"));
+    dumpParameter("--ad-min-occurrences",
+                  optional(arguments, "--ad-min-occurrences", "2"));
+    dumpParameter("--ad-min-families",
+                  optional(arguments, "--ad-min-families", "2"));
+    dumpParameter("--programme-audio-threshold",
+                  optional(arguments, "--programme-audio-threshold", "0.93"));
+    dumpParameter("--programme-video-threshold",
+                  optional(arguments, "--programme-video-threshold", "0.985"));
+    dumpParameter("--programme-confirm-margin",
+                  optional(arguments, "--programme-confirm-margin", "0.02"));
+    dumpParameter("--marker-max", optional(arguments, "--marker-max", "30"));
+    dumpParameter("--marker-min-occurrences",
+                  optional(arguments, "--marker-min-occurrences", "3"));
+    dumpParameter("--store",
+                  booleanText(arguments.flags.count("--store") != 0));
+    dumpParameter("--no-self",
+                  booleanText(arguments.flags.count("--no-self") != 0));
+    dumpParameter(
+        "--no-programme-inference",
+        booleanText(arguments.flags.count("--no-programme-inference") != 0));
+    dumpParameter("--output", optional(arguments, "--output", "<stdout>"));
+  }
+  std::cerr << '\n';
+}
+
 std::string jsonQuote(const std::string& value) {
   std::ostringstream output;
   output << '"';
@@ -415,6 +494,8 @@ AnalyzedInput analyze(const Arguments& arguments) {
   if (analyzer_options.timestamp_jump_threshold_seconds <= 0.0)
     throw std::runtime_error("--timestamp-jump must be positive");
 
+  dumpMediaParameters(arguments, input, name, source_id);
+
   ProgressPrinter progress;
   if (!arguments.flags.count("--no-progress")) {
     analyzer_options.progress_callback = [&](double processed, double total) {
@@ -492,6 +573,8 @@ int run(const Arguments& arguments) {
     const std::string path = require(arguments, "--db");
     if (std::filesystem::exists(std::filesystem::u8path(path)))
       throw std::runtime_error("database already exists: " + path);
+    maximumRecordingsArgument(arguments);
+    dumpDatabaseParameters(arguments);
     auto database = recdup::VectorDatabase::create();
     reportEvictions(applyRecordingLimit(arguments, database));
     database.save(path);
@@ -500,6 +583,7 @@ int run(const Arguments& arguments) {
   }
   if (arguments.command == "info") {
     const std::string path = require(arguments, "--db");
+    dumpDatabaseParameters(arguments);
     auto database = recdup::VectorDatabase::load(path);
     std::cout << "{\"schema_version\":4,\"path\":" << jsonQuote(path)
               << ",\"vectors\":" << database.size()
@@ -514,6 +598,8 @@ int run(const Arguments& arguments) {
     if (!arguments.values.count("--max-recordings"))
       throw std::runtime_error(
           "configure requires --max-recordings");
+    maximumRecordingsArgument(arguments);
+    dumpDatabaseParameters(arguments);
     auto database = recdup::VectorDatabase::load(path);
     const auto evicted = applyRecordingLimit(arguments, database);
     database.save(path);
@@ -525,6 +611,7 @@ int run(const Arguments& arguments) {
   }
   if (arguments.command == "ingest") {
     const std::string path = require(arguments, "--db");
+    maximumRecordingsArgument(arguments);
     auto analyzed = analyze(arguments);
     auto database = loadOrCreate(path);
     auto evicted = applyRecordingLimit(arguments, database);
@@ -542,6 +629,8 @@ int run(const Arguments& arguments) {
     std::optional<recdup::ProgrammeInferenceOptions> inference_options;
     if (!arguments.flags.count("--no-programme-inference"))
       inference_options.emplace(inferenceOptions(arguments));
+    if (arguments.flags.count("--store"))
+      maximumRecordingsArgument(arguments);
 
     auto analyzed = analyze(arguments);
     std::optional<recdup::VectorDatabase> database;

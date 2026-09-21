@@ -30,6 +30,14 @@ class AutoCutTests(unittest.TestCase):
                 with self.assertRaises(auto_cut.ConfigError):
                     auto_cut.split_params(option, "params")
 
+    def test_params_allow_database_options(self):
+        self.assertEqual(
+            auto_cut.split_params(
+                "--store --db recent.db --max-recordings 7", "params"
+            ),
+            ("--store", "--db", "recent.db", "--max-recordings", "7"),
+        )
+
     def test_partition_ranges_covers_complete_source(self):
         ranges = auto_cut.partition_ranges(
             [segment(200, 400, 10, 20), segment(800, 1100, 40, 60)],
@@ -203,6 +211,52 @@ class AutoCutTests(unittest.TestCase):
                     item, root / "recdup", root, restarted_state
                 )
             second_scan.assert_not_called()
+
+    def test_missing_output_folder_scans_without_writing_and_records_state(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            input_folder = root / "input"
+            input_folder.mkdir()
+            source = input_folder / "recording.ts"
+            source.write_bytes(b"S" * auto_cut.TS_PACKET_SIZE)
+            item = auto_cut.FolderConfig(
+                name="store-only",
+                folder=input_folder,
+                output_folder=None,
+                check_times=(),
+                params=("--store", "--db", "recent.db"),
+                delete_source=False,
+                mtime_over=0,
+                enable=True,
+            )
+            state_path = root / "processed.state.json"
+            state = auto_cut.ProcessedState.load(state_path)
+            with mock.patch.object(auto_cut, "run_recdup", return_value={}) as scan:
+                failures = auto_cut.process_folder(
+                    item, root / "recdup", root, state
+                )
+            self.assertEqual(failures, 0)
+            scan.assert_called_once()
+            self.assertTrue(source.is_file())
+            self.assertEqual(list(root.glob("*.part*.ts")), [])
+            self.assertIsNotNone(state.outcome(item, source))
+
+            restarted = auto_cut.ProcessedState.load(state_path)
+            with mock.patch.object(auto_cut, "run_recdup") as second_scan:
+                auto_cut.process_folder(item, root / "recdup", root, restarted)
+            second_scan.assert_not_called()
+
+    def test_scan_only_configuration_rejects_delete_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "auto_folder.json"
+            config.write_text(
+                '[{"folder":"input","check_time":"00:00",'
+                '"delete_source":true}]',
+                encoding="utf-8",
+            )
+            with self.assertRaises(auto_cut.ConfigError):
+                auto_cut.load_config(config)
 
     def test_processed_state_is_invalidated_when_params_change(self):
         with tempfile.TemporaryDirectory() as directory:

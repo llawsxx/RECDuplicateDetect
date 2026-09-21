@@ -45,7 +45,7 @@ class CutSegment:
 class FolderConfig:
     name: str
     folder: Path
-    output_folder: Path
+    output_folder: Path | None
     check_times: tuple[dt.time, ...]
     params: tuple[str, ...]
     delete_source: bool
@@ -84,7 +84,11 @@ class ProcessedState:
 
     @staticmethod
     def key(item: FolderConfig, source: Path) -> str:
-        output = os.path.normcase(str(item.output_folder.resolve()))
+        output = (
+            os.path.normcase(str(item.output_folder.resolve()))
+            if item.output_folder is not None
+            else "<scan-only>"
+        )
         input_file = os.path.normcase(str(source.resolve()))
         return f"{item.name}\n{output}\n{input_file}"
 
@@ -125,7 +129,10 @@ class ProcessedState:
         try:
             if snapshot(source) != outcome.source:
                 return None
-            if not outputs_are_complete(outcome):
+            if item.output_folder is None:
+                if outcome.outputs:
+                    return None
+            elif not outputs_are_complete(outcome):
                 return None
         except OSError:
             return None
@@ -139,7 +146,11 @@ class ProcessedState:
             "source": str(source.resolve()),
             "source_size": outcome.source.size,
             "source_mtime_ns": outcome.source.mtime_ns,
-            "output_folder": str(item.output_folder.resolve()),
+            "output_folder": (
+                str(item.output_folder.resolve())
+                if item.output_folder is not None
+                else None
+            ),
             "outputs": [str(path.resolve()) for path in outcome.outputs],
             "processing_signature": self.processing_signature(item),
             "processed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -193,9 +204,6 @@ def split_params(value: Any, field: str) -> tuple[str, ...]:
         "--input",
         "--output",
         "--no-programme-inference",
-        "--store",
-        "--db",
-        "--max-recordings",
     }
     for token in result:
         option = token.split("=", 1)[0]
@@ -251,11 +259,21 @@ def load_config(path: Path) -> list[FolderConfig]:
             raise ConfigError(f"{prefix}.mtime_over must be a non-negative number")
 
         folder = config_path(item.get("folder"), f"{prefix}.folder", base)
-        output_folder = config_path(
-            item.get("output_folder"), f"{prefix}.output_folder", base
+        output_value = item.get("output_folder")
+        output_folder = (
+            config_path(output_value, f"{prefix}.output_folder", base)
+            if output_value is not None
+            else None
         )
-        if folder == output_folder:
+        if output_folder is not None and folder == output_folder:
             raise ConfigError(f"{prefix} input and output folders must differ")
+        delete_source = require_bool(
+            item.get("delete_source", False), f"{prefix}.delete_source"
+        )
+        if output_folder is None and delete_source:
+            raise ConfigError(
+                f"{prefix}.delete_source requires output_folder"
+            )
         result.append(
             FolderConfig(
                 name=name,
@@ -265,9 +283,7 @@ def load_config(path: Path) -> list[FolderConfig]:
                     item.get("check_time"), f"{prefix}.check_time"
                 ),
                 params=split_params(item.get("params", ""), f"{prefix}.params"),
-                delete_source=require_bool(
-                    item.get("delete_source", False), f"{prefix}.delete_source"
-                ),
+                delete_source=delete_source,
                 mtime_over=float(mtime_over),
                 enable=require_bool(item.get("enable", True), f"{prefix}.enable"),
             )
@@ -324,7 +340,9 @@ def partition_ranges(
         candidates.append((start, end, float(start_time), float(end_time)))
 
     candidates.sort(key=lambda value: (value[0], value[1]))
-    merged: list[tuple[int, int, float, float]] = []
+    ranges: list[CutSegment] = []
+    cursor = 0
+    cursor_time = 0.0
     for start, end, start_time, end_time in candidates:
         aligned_start = min(
             source_size, start // TS_PACKET_SIZE * TS_PACKET_SIZE
@@ -335,23 +353,8 @@ def partition_ranges(
         )
         if aligned_end <= aligned_start:
             continue
-        start_time = max(0.0, min(float(source_duration), start_time))
-        end_time = max(start_time, min(float(source_duration), end_time))
-        if merged and aligned_start <= merged[-1][1]:
-            previous = merged[-1]
-            merged[-1] = (
-                previous[0],
-                max(previous[1], aligned_end),
-                min(previous[2], start_time),
-                max(previous[3], end_time),
-            )
-        else:
-            merged.append((aligned_start, aligned_end, start_time, end_time))
-
-    ranges: list[CutSegment] = []
-    cursor = 0
-    cursor_time = 0.0
-    for aligned_start, aligned_end, start_time, end_time in merged:
+        aligned_start = max(cursor, aligned_start)
+        aligned_end = max(aligned_start, aligned_end)
         start_time = max(cursor_time, min(float(source_duration), start_time))
         end_time = max(start_time, min(float(source_duration), end_time))
         if aligned_start > cursor:
@@ -502,7 +505,11 @@ def process_file(
     executable: Path,
     config_directory: Path,
 ) -> ProcessOutcome | None:
-    existing_outputs = existing_segment_outputs(item.output_folder, source)
+    existing_outputs = (
+        existing_segment_outputs(item.output_folder, source)
+        if item.output_folder is not None
+        else []
+    )
     if existing_outputs:
         log(f"[{item.name}] Validating existing segments: {source.name}")
 
@@ -523,6 +530,10 @@ def process_file(
     if after_scan != before:
         log(f"[{item.name}] Source changed during scan; postponing: {source.name}")
         return None
+
+    if item.output_folder is None:
+        log(f"[{item.name}] Scan completed without segment output: {source.name}")
+        return ProcessOutcome(before, ())
 
     segments = result.get("programme_guesses")
     if not isinstance(segments, list):
@@ -599,7 +610,8 @@ def process_folder(
     if not item.folder.is_dir():
         log(f"[{item.name}] Input folder does not exist: {item.folder}")
         return 0
-    item.output_folder.mkdir(parents=True, exist_ok=True)
+    if item.output_folder is not None:
+        item.output_folder.mkdir(parents=True, exist_ok=True)
     sources = sorted(
         (
             path
